@@ -1,0 +1,10 @@
+# generated single-file build (produced by `make dev`, published by CI)
+ui/dist/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# local working dirs (WP dump + subagent image landing zone)
+scratchpad-v2v/
+site/
