@@ -1,0 +1,36 @@
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]        # deploy on every push to the default branch
+  workflow_dispatch:        # ...and allow manual runs
+
+permissions:                # least privilege the Pages deploy needs
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:                # one deploy at a time; don't cancel an in-flight one
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive        # pull the unframe-kit submodule for the composer
+
+      - name: Build the single-file site
+        run: make dev                  # composes ui/dist/index.html + assets
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui/dist                 # the single-file build output
+      - id: deploy
+        uses: actions/deploy-pages@v4

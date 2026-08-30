@@ -1,0 +1,12 @@
+{{layout-css}}:ui/layout.css
+{{layout-js}}:ui/layout.js
+{{header}}:ui/comps/header.html
+{{hero}}:ui/comps/hero.html
+{{purpose}}:ui/comps/purpose.html
+{{workshop}}:ui/comps/workshop.html
+{{testimonials}}:ui/comps/testimonials.html
+{{different}}:ui/comps/different.html
+{{about}}:ui/comps/about.html
+{{founder}}:ui/comps/founder.html
+{{contact}}:ui/comps/contact.html
+{{footer}}:ui/comps/footer.html

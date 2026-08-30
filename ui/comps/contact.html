@@ -1,0 +1,81 @@
+<section class="section section--sand" id="contact">
+    <div class="container">
+        <div class="section-head center">
+            <p class="eyebrow">Contact</p>
+            <h2>Get in touch</h2>
+            <p class="lead">We are here to assist you. If you have any questions about our coaching programs or workshops, please do not hesitate to contact us. We would be more than happy to address any of your questions, comments, or concerns.</p>
+        </div>
+
+        <div class="contact-info">
+            <div class="info-card">
+                <div class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+                <h4>Phone</h4>
+                <p><a href="tel:+27788385783">+27 78 838 5783</a></p>
+            </div>
+            <div class="info-card">
+                <div class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg></div>
+                <h4>Email Address</h4>
+                <p><a href="mailto:info@victim2victor.co.za">info@victim2victor.co.za</a></p>
+            </div>
+            <div class="info-card">
+                <div class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+                <h4>Address</h4>
+                <p>Parow East, Cape Town, 7501, South Africa</p>
+            </div>
+        </div>
+
+        <div class="form-grid">
+            <div class="form-card">
+                <h3>Send us a message</h3>
+                <p class="form-note">Opens your email app with the details filled in.</p>
+                <form onsubmit="return handleForm(event, 'Victim2Victor enquiry')">
+                    <div class="field">
+                        <label for="c-email">Email</label>
+                        <input id="c-email" type="email" name="Email" placeholder="you@example.com" required>
+                    </div>
+                    <div class="field">
+                        <label for="c-subject">Subject</label>
+                        <input id="c-subject" type="text" name="Subject" placeholder="What is this about?" required>
+                    </div>
+                    <div class="field">
+                        <label for="c-message">Message</label>
+                        <textarea id="c-message" name="Message" placeholder="Write your message here..." required></textarea>
+                    </div>
+                    <button class="btn btn--primary" type="submit">Submit Message</button>
+                </form>
+            </div>
+
+            <div class="form-card">
+                <h3>Register for a workshop</h3>
+                <p class="form-note">Tell us which workshop you'd like to join.</p>
+                <form onsubmit="return handleForm(event, 'Workshop registration')">
+                    <div class="field">
+                        <label for="r-workshop">Which workshop</label>
+                        <input id="r-workshop" type="text" name="Which workshop" placeholder="e.g. Overcoming Childhood Trauma" required>
+                    </div>
+                    <div class="two-up">
+                        <div class="field">
+                            <label for="r-name">Your Name</label>
+                            <input id="r-name" type="text" name="Name" placeholder="Full name" required>
+                        </div>
+                        <div class="field">
+                            <label for="r-people">Number of people</label>
+                            <input id="r-people" type="text" name="Number of people" placeholder="1" required>
+                        </div>
+                    </div>
+                    <div class="two-up">
+                        <div class="field">
+                            <label for="r-email">Email</label>
+                            <input id="r-email" type="email" name="Email" placeholder="you@example.com" required>
+                        </div>
+                        <div class="field">
+                            <label for="r-phone">Phone Number</label>
+                            <input id="r-phone" type="tel" name="Phone" placeholder="+27 ..." required>
+                        </div>
+                    </div>
+                    <button class="btn btn--primary" type="submit">Submit</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
