@@ -23,10 +23,10 @@
 /* ---- Contact forms ----
    Backend is intentionally deferred (see README). Until a backend
    (e.g. Supabase, per the unframe online build) is wired in, each
-   form composes a mailto: to info@victim2victor.co.za from its
+   form composes a mailto: to victim2victorinitiative@gmail.com from its
    fields so submissions still reach the team. Swap `handleForm`
    for a `fetch(...)` inside //online markers when the backend lands. */
-var CONTACT_EMAIL = "info@victim2victor.co.za";
+var CONTACT_EMAIL = "victim2victorinitiative@gmail.com";
 
 function handleForm(evt, subjectPrefix) {
     evt.preventDefault();
