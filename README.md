@@ -12,13 +12,14 @@ reaching across South Africa.
 ## Build
 
 ```bash
-git submodule update --init --recursive   # pull the unframe-kit composer
-make dev                                   # → ui/dist/index.html (+ ui/dist/img)
+make dev    # → ui/dist/index.html (+ ui/dist/img)
 ```
+
+No dependencies to install — `make` and `awk` are all it needs.
 
 Open `ui/dist/index.html` in a browser. `make clean` removes the output.
 
-The build is the unframe composer (`unframe-kit/runtime/tpl.mk`): an `awk` macro
+The build is the unframe composer (`make/tpl.mk`): an `awk` macro
 that streams `ui/layout.html` and inlines the CSS, JS and every section partial —
 driven by the token → file map in `make/web.map`.
 
@@ -27,7 +28,7 @@ driven by the token → file map in `make/web.map`.
 ```
 Makefile                     build targets (dev, clean)
 make/web.map                 token → file mapping for the composer
-unframe-kit/                 the unframe kit (git submodule): runtime + skill
+make/tpl.mk                  the unframe compose macro (vendored)
 ui/
   layout.html                page shell with composer tokens
   layout.css                 the whole design system (palette, type, components)
@@ -76,12 +77,27 @@ markers and keep the mailto as the offline fallback.
 
 ## Deployment (GitHub Pages)
 
-`.github/workflows/pages.yml` checks out the repo (with submodules), runs
-`make dev`, and publishes `ui/dist` on every push to `main`. One-time setup in the
-repo: **Settings → Pages → Source: GitHub Actions**. Point the
+`.github/workflows/pages.yml` is committed **identically to both repos** and
+branches on `github.repository`:
+
+| Repo | Ref | Result |
+|---|---|---|
+| `victim2victor/staging` | any branch | build → staging Pages site |
+| `victim2victor/staging` | `main` | build → staging Pages, then promote to production |
+| `victim2victor/victim2victor.co.za` | `main` | build → production Pages site |
+| `victim2victor/victim2victor.co.za` | other | build-check only, no deploy |
+
+Push a branch to see it on the staging site (one Pages site per repo, so the most
+recent push is what's live there). Merging to `main` ships to production —
+promotion is gated on the staging build succeeding.
+
+One-time setup: **Settings → Pages → Source: GitHub Actions** in both repos, and
+a write-enabled deploy key for the production repo whose private half is stored
+as the `PROD_DEPLOY_KEY` secret in the staging repo. Point the
 `victim2victor.co.za` domain at Pages once the build is verified.
 
 ---
 
-Runtime and build conventions come from the **unframe** kit vendored at
-`unframe-kit/` (its skill is symlinked into `.claude/skills/unframe`).
+Runtime and build conventions come from the **unframe** kit. Its compose macro
+is vendored at `make/tpl.mk` and its skill at `.claude/skills/unframe/` — both
+copied in, so the repo has no submodule to initialise.

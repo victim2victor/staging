@@ -1,36 +1,122 @@
-name: Deploy site to GitHub Pages
+name: Deploy to GitHub Pages
+
+# One workflow, committed identically to both repos. It branches on
+# github.repository so the same file behaves correctly in each:
+#
+#   victim2victor/victim2victor.co.za  (PRODUCTION)
+#     - main            → build, deploy to the production Pages site
+#     - other branches  → build-check only, never deploys
+#
+#   victim2victor/staging              (STAGING)
+#     - any branch      → build, deploy to the staging Pages site
+#     - main            → additionally promote: push HEAD to the production
+#                         repo's main, which triggers the production deploy
+#                         above. Gated on the staging deploy succeeding.
+#
+# Pushing any branch updates staging (one Pages site per repo, so the most
+# recent push is what's live there). Merging to main ships to production.
+#
+# Keeping the file identical in both repos matters: promotion pushes staging's
+# main into prod's main, which carries this workflow file with it. If the two
+# ever diverged, a promotion would overwrite prod's workflow.
 
 on:
   push:
-    branches: [main]        # deploy on every push to the default branch
-  workflow_dispatch:        # ...and allow manual runs
+  workflow_dispatch:
 
-permissions:                # least privilege the Pages deploy needs
+permissions:
   contents: read
   pages: write
   id-token: write
 
-concurrency:                # one deploy at a time; don't cancel an in-flight one
-  group: pages
-  cancel-in-progress: false
+concurrency:
+  group: pages-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  # PRODUCTION repo, main → build and deploy the live site.
+  deploy-prod:
+    if: github.repository == 'victim2victor/victim2victor.co.za' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the single-file site
+        run: make dev
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui/dist
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
+
+  # PRODUCTION repo, non-main branch → validate the build only, never deploys.
+  build-check:
+    if: github.repository == 'victim2victor/victim2victor.co.za' && github.ref != 'refs/heads/main'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (no deploy)
+        run: make dev
+
+  # STAGING repo, any branch → deploy to the staging Pages site.
+  deploy-staging:
+    if: github.repository == 'victim2victor/staging'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the single-file site
+        run: make dev
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ui/dist
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
+
+  # STAGING repo, main → promote to production by pushing to the prod repo's
+  # main. The prod repo's own workflow (deploy-prod above) then builds and
+  # deploys. Auth is a write-enabled deploy key registered on the prod repo,
+  # with its private half stored as the PROD_DEPLOY_KEY secret in this repo.
+  #
+  # `needs: deploy-staging` means a merge to main that fails to build never
+  # reaches production.
+  #
+  # The push is a plain fast-forward; it will be rejected (not forced) if the
+  # histories have diverged, which is a deliberate safety signal.
+  promote-prod:
+    if: github.repository == 'victim2victor/staging' && github.ref == 'refs/heads/main'
+    needs: deploy-staging
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive        # pull the unframe-kit submodule for the composer
+          fetch-depth: 0
 
-      - name: Build the single-file site
-        run: make dev                  # composes ui/dist/index.html + assets
-
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ui/dist                 # the single-file build output
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - name: Push to production repo
+        env:
+          PROD_DEPLOY_KEY: ${{ secrets.PROD_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$PROD_DEPLOY_KEY" > ~/.ssh/prod_key
+          chmod 600 ~/.ssh/prod_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/prod_key -o IdentitiesOnly=yes"
+          git remote add production git@github.com:victim2victor/victim2victor.co.za.git
+          git push production HEAD:main
