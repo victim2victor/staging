@@ -3,7 +3,7 @@ name: Deploy to GitHub Pages
 # One workflow, committed identically to both repos. It branches on
 # github.repository so the same file behaves correctly in each:
 #
-#   victim2victor/victim2victor.co.za  (PRODUCTION)
+#   victim2victor/victim2victor.github.io  (PRODUCTION)
 #     - main            → build, deploy to the production Pages site
 #     - other branches  → build-check only, never deploys
 #
@@ -36,7 +36,7 @@ concurrency:
 jobs:
   # PRODUCTION repo, main → build and deploy the live site.
   deploy-prod:
-    if: github.repository == 'victim2victor/victim2victor.co.za' && github.ref == 'refs/heads/main'
+    if: github.repository == 'victim2victor/victim2victor.github.io' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -58,7 +58,7 @@ jobs:
 
   # PRODUCTION repo, non-main branch → validate the build only, never deploys.
   build-check:
-    if: github.repository == 'victim2victor/victim2victor.co.za' && github.ref != 'refs/heads/main'
+    if: github.repository == 'victim2victor/victim2victor.github.io' && github.ref != 'refs/heads/main'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -118,5 +118,5 @@ jobs:
           chmod 600 ~/.ssh/prod_key
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/prod_key -o IdentitiesOnly=yes"
-          git remote add production git@github.com:victim2victor/victim2victor.co.za.git
+          git remote add production git@github.com:victim2victor/victim2victor.github.io.git
           git push production HEAD:main

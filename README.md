@@ -84,12 +84,16 @@ branches on `github.repository`:
 |---|---|---|
 | `victim2victor/staging` | any branch | build → staging Pages site |
 | `victim2victor/staging` | `main` | build → staging Pages, then promote to production |
-| `victim2victor/victim2victor.co.za` | `main` | build → production Pages site |
-| `victim2victor/victim2victor.co.za` | other | build-check only, no deploy |
+| `victim2victor/victim2victor.github.io` | `main` | build → production Pages site |
+| `victim2victor/victim2victor.github.io` | other | build-check only, no deploy |
 
 Push a branch to see it on the staging site (one Pages site per repo, so the most
 recent push is what's live there). Merging to `main` ships to production —
 promotion is gated on the staging build succeeding.
+
+The production repo must be named `victim2victor.github.io` — that exact name is
+what makes GitHub serve it at `https://victim2victor.github.io` rather than
+`https://victim2victor.github.io/<repo>/`.
 
 One-time setup: **Settings → Pages → Source: GitHub Actions** in both repos, and
 a write-enabled deploy key for the production repo whose private half is stored
