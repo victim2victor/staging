@@ -42,7 +42,7 @@ stg:
 	@mkdir -p $(BUILD_DIR)/img
 	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
 	@cp $(IMGS) $(BUILD_DIR)/img/
-	@sed -i 's/var SUPABASE_ENV      = "production"/var SUPABASE_ENV      = "staging"/' $(BUILD_DIR)/index.html
+	@sed -i 's/\(var SUPABASE_ENV *= *"\)production"/\1staging"/' $(BUILD_DIR)/index.html
 	@echo "stg: online build (Supabase calls kept, environment=staging) → $(BUILD_DIR)/index.html"
 
 ## prd — online build for production (Supabase calls kept; rows tagged 'production')

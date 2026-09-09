@@ -29,6 +29,9 @@
                 <h3>Send us a message</h3>
                 <p class="form-note">Opens your email app with the details filled in.</p>
                 <form onsubmit="return handleForm(event, 'enquiries', 'Victim2Victor enquiry')">
+                    <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+                        <label>Company<input type="text" name="company" data-hp="1" tabindex="-1" autocomplete="off"></label>
+                    </div>
                     <div class="field">
                         <label for="c-email">Email</label>
                         <input id="c-email" type="email" name="email" data-label="Email" placeholder="you@example.com" required>
@@ -49,6 +52,9 @@
                 <h3>Register for a workshop</h3>
                 <p class="form-note">Tell us which workshop you'd like to join.</p>
                 <form onsubmit="return handleForm(event, 'workshop_registrations', 'Workshop registration')">
+                    <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+                        <label>Company<input type="text" name="company" data-hp="1" tabindex="-1" autocomplete="off"></label>
+                    </div>
                     <div class="field">
                         <label for="r-workshop">Which workshop</label>
                         <input id="r-workshop" type="text" name="workshop" data-label="Which workshop" placeholder="e.g. Overcoming Childhood Trauma" required>

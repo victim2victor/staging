@@ -73,64 +73,77 @@ two forms) · **footer**.
 ## Data models
 
 The two contact forms persist to Supabase in the online build. Each form maps to
-one table; all fields are stored as `text` (the forms are free-text inputs). The
-schema lives in `supabase/migrations/0001_contact_forms.sql`.
+one table; all user fields are stored as `text` (the forms are free-text inputs).
+The schema lives in `db/001_contact_forms.sql`; see `supabase/README.md` for the
+back-end setup.
 
 **`enquiries`** — the "Send us a message" form.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `bigint` | identity, primary key |
-| `created_at` | `timestamptz` | defaults to `now()` |
-| `environment` | `text` | `'staging'` or `'production'` — which build wrote the row |
+| `environment` | `text` | `'staging'` or `'production'` — which site wrote the row |
 | `email` | `text` | sender's email |
 | `subject` | `text` | subject line |
 | `message` | `text` | message body |
+| `session_token` | `uuid` | soft link to the browser's session token; nullable |
+| `created_at` | `timestamptz` | defaults to `now()` |
 
 **`workshop_registrations`** — the "Register for a workshop" form.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `bigint` | identity, primary key |
-| `created_at` | `timestamptz` | defaults to `now()` |
-| `environment` | `text` | `'staging'` or `'production'` — which build wrote the row |
+| `environment` | `text` | `'staging'` or `'production'` — which site wrote the row |
 | `workshop` | `text` | which workshop |
 | `name` | `text` | registrant's name |
 | `people` | `text` | number of people |
 | `email` | `text` | registrant's email |
 | `phone` | `text` | phone number |
+| `session_token` | `uuid` | soft link to the browser's session token; nullable |
+| `created_at` | `timestamptz` | defaults to `now()` |
+
+A shared **`rate_limits`** table (`db/002_rate_limits.sql`) backs the limiter — see
+below.
 
 **Environment tagging.** Both the staging and production sites write to the same
-Supabase project, so every row records which one it came from. `environment` is
-stamped at build time — `make prd` writes `'production'`, `make stg` rewrites it to
-`'staging'` (a `check` constraint on the column allows only those two values). Filter
-on `environment = 'production'` to exclude staging traffic, or `= 'staging'` to see
-only it.
+Supabase project, so every row records which one it came from. The edge function
+sets `environment`: from the request origin where the hostnames differ (the live
+custom domain → `'production'`), otherwise from the build stamp (`make stg` →
+`'staging'`, `make prd` → `'production'`). A `check` constraint allows only those
+two values. Filter on `environment = 'production'` to exclude staging traffic.
 
-**Security.** Both tables have row-level security enabled with an INSERT-only
-policy for the `anon` role — the public forms can submit rows but cannot read,
-edit, or delete them. Read submissions in the Supabase dashboard or with the
-service role.
+**Security.** Both tables (and `rate_limits`) have **row-level security enabled
+with no policies**, so the publishable key can neither read nor write them. Every
+submission is inserted by the `submit-form` edge function as **service role** —
+which is what makes the rate limiting unbypassable and keeps submissions
+unreadable from the client. Read them in the Supabase dashboard or via the service
+role.
 
 ## Contact forms — Supabase backend
 
 Both forms (general enquiry and workshop registration) are wired through
 `handleForm` in `ui/layout.js` following the unframe online/offline split:
 
-- **online (`make stg` / `make prd`)** — the submission is inserted into the
-  matching Supabase table via the REST API (`POST /rest/v1/<table>`). Each
-  input's `name` is its column; its `data-label` is the human label used by the
-  mailto fallback. This code is fenced with `//online` markers.
+- **online (`make stg` / `make prd`)** — the submission is POSTed to the
+  **`submit-form` edge function** (`/functions/v1/submit-form`), which validates,
+  applies a **honeypot + rate limit**, and inserts as service role. The browser
+  sends a random `session_token` (kept in `localStorage`) alongside the fields.
+  This code is fenced with `//online` markers.
 - **offline (`make dev`)** — the `//online` code is stripped, leaving a
   `mailto:victim2victorinitiative@gmail.com` fallback so the static demo still
   reaches the team.
 
-**Before the online build works, fill in the project credentials.** `ui/layout.js`
-has placeholders (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) inside `//online` markers.
-Set them to the Victim2Victor Supabase project's URL and **publishable (anon)**
-key — both are public by design and safe to commit; row-level security is what
-protects the data. Then apply `supabase/migrations/0001_contact_forms.sql` to the
-project (Supabase dashboard SQL editor, or `supabase db push`).
+**Spam protection / rate limiting** lives entirely in the function: a hidden
+honeypot field, per-field validation, and a sliding-window limit (default **5 per
+10 min**) counted in `rate_limits`, keyed by **both** the caller's salted IP hash
+and their `session_token`. See `supabase/README.md`.
+
+**Before the online build works:** run `db/001_contact_forms.sql` and
+`db/002_rate_limits.sql`, deploy the function (`supabase functions deploy
+submit-form --no-verify-jwt`), set the `IP_HASH_SALT` secret, and fill in
+`SUPABASE_URL` / `SUPABASE_ANON` (the publishable key) in `ui/layout.js`. Full
+steps are in `supabase/README.md`.
 
 ## Deployment (GitHub Pages)
 

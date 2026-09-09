@@ -535,9 +535,11 @@ move is incremental and touches only the code inside the `//online` markers — 
 build keeps working throughout. Two backends, same `fetch` contract:
 
 - **Supabase** (managed) — the `fetch(...)` calls inside `//online-start … //online-end`
-  blocks talk to Supabase's REST / `supabase-js` data API (or a small edge function).
-  Persistence and later auth live in Supabase. Lower-effort; reach for it first when a
-  managed Postgres is enough.
+  blocks talk to Supabase. **Public reads** (e.g. a read-only catalogue) may hit the REST
+  API (PostgREST) directly with the publishable key. **Writes go through a rate-limited
+  edge function by default** (see "Writes go through a rate-limited edge function" below) —
+  not straight to PostgREST. Persistence and later auth live in Supabase. Lower-effort;
+  reach for it first when a managed Postgres is enough.
 - **Go + Postgres** (self-hosted) — the same `fetch(...)` calls hit a **Go HTTP service**
   that owns a **Postgres** database. This is the **top of the ladder**: full control over
   the API and schema. Climb here last, **unless a Go service is specifically required**,
@@ -551,6 +553,59 @@ build a first-class target after it lands. When you move to Postgres (Supabase o
 documented CRUD models are what the schema is built from — another reason the README
 models must stay exact.
 
+### Writes go through a rate-limited edge function (default)
+
+**Inserts do not go straight to PostgREST — they go through an edge function that
+rate-limits them.** This is the default for any user-writable table (form
+submissions, sign-ups, reactions, orders). The reason is that rate limiting is only
+enforceable server-side: if the browser could `POST` straight to PostgREST with the
+publishable key, it could bypass any limiter. So:
+
+- **The table is RLS-on with *no* policies.** The publishable key can neither read
+  nor write it. (Public *read* tables are the exception — they get a permissive
+  `SELECT` policy and are read directly.)
+- **An edge function is the only write path**, connecting as **service role**
+  (`SUPABASE_SERVICE_ROLE_KEY`, injected automatically). It validates input, applies
+  the rate limit, then inserts. Deploy it with JWT verification off
+  (`supabase functions deploy <name> --no-verify-jwt`) since the browser calls it
+  with only the publishable key; record that in `supabase/config.toml`.
+- **The browser** `POST`s to `<url>/functions/v1/<name>` with the publishable key as
+  a bearer token, inside the `//online` markers (stripped from the offline build,
+  which keeps whatever local fallback the form had).
+
+**Rate limiting** is counted in the database, not function memory (an edge function
+runs as several stateless instances). A small `rate_limits` table holds one row per
+hit under an opaque `bucket` string; the function counts rows in the trailing window
+and refuses when over:
+
+```sql
+CREATE TABLE IF NOT EXISTS rate_limits (
+  id BIGSERIAL PRIMARY KEY, bucket TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS rate_limits_bucket_created_idx ON rate_limits (bucket, created_at);
+ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;   -- service role only
+```
+
+Key each request under **two buckets — the caller's IP and their session token** —
+so one browser is capped even behind a shared IP, and a rotated token can't reset the
+IP's allowance:
+
+- **IP** — never store the raw IP. Hash it (`SHA-256` with an `IP_HASH_SALT` secret,
+  the same salt across all functions) and use `ip:<hash>` as the bucket.
+- **Session token** — a random `crypto.randomUUID()` the client keeps in
+  `localStorage` and sends with every write; bucket `sess:<uuid>`. Store it on the
+  row too (nullable, no FK) as a soft link.
+
+Add cheap **spam protection** in the same function: a hidden **honeypot** field (bots
+fill it → return success, store nothing) and per-field validation (required, email
+format, length clamps). See the app-side reference implementation in
+`supabase/functions/` and `db/` of a repo that has one.
+
+Lay the back-end out like the other repos: `db/NNN_*.sql` for schema, one
+`supabase/functions/<name>/index.ts` per function, `supabase/config.toml` for
+`verify_jwt`, and a `supabase/README.md` with the setup steps (run SQL, deploy
+functions, set `IP_HASH_SALT`, fill the URL + publishable key).
+
 ### The `environment` column — tag every row with its build
 
 Staging and production deploy online by default (above) and write to the **same**
@@ -558,21 +613,27 @@ backend, so **every table carries an `environment` column** to keep the two apar
 Make it `not null` with a `check (environment in ('staging', 'production'))`, and
 document it alongside the other columns in the README.
 
-The value is **stamped at build time, not detected at runtime.** The online config in
-`layout.js` carries a variable (e.g. `DB_ENV`) defaulting to `"production"`, and every
-insert sends it as the row's `environment`. The `prd` target keeps the default; the
-`stg` target rewrites it to `"staging"` with a one-line `sed` on the composed output —
-the same mechanism the `dev` target uses to strip `//online` code:
+**The edge function sets it**, two ways in order of preference:
 
-```make
-stg:
-	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
-	@sed -i 's/var DB_ENV = "production"/var DB_ENV = "staging"/' $(BUILD_DIR)/index.html
-```
+1. **From the request origin**, where staging and production have distinct hostnames
+   (`https://app.example.com` → `'production'`). This is server-authoritative and the
+   client can't spoof it.
+2. **From a build stamp**, where the two share an origin (e.g. GitHub Pages path-based
+   staging). The online config in `layout.js` carries a variable (e.g. `DB_ENV`)
+   defaulting to `"production"`; the browser sends it and the function trusts it as a
+   fallback. The `prd` target keeps the default; the `stg` target rewrites it with a
+   one-line `sed` on the composed output — the same mechanism `dev` uses to strip
+   `//online` code:
+
+   ```make
+   stg:
+   	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+   	@sed -i 's/\(var DB_ENV *= *"\)production"/\1staging"/' $(BUILD_DIR)/index.html
+   ```
 
 Then reads filter by build: `where environment = 'production'` excludes staging
-traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online config
-with everything else, so no row is ever written from it.)
+traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online path
+entirely, so no row is ever written from it.)
 
 ## When scaffolding a new app
 

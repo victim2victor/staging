@@ -1,0 +1,63 @@
+# Supabase back-end
+
+The two contact forms submit into Supabase. The offline `dev` build never
+touches it (the forms fall back to a `mailto:`); the online `stg`/`prd` builds
+POST to the `submit-form` edge function.
+
+## Write path — edge function only
+
+Both tables are **RLS-on with no policies**, so the publishable key can neither
+read nor write them. Every submission goes through the **`submit-form`** edge
+function, which writes as **service role**. Routing it through the function is
+what makes the rate limiting unbypassable — the browser has no write path that
+skips the limiter — and keeps submissions unreadable from the client (read them
+in the dashboard or via the service role).
+
+- **`../db/001_contact_forms.sql`** — `enquiries` and `workshop_registrations`
+  (RLS on, no policies). Each row carries `environment` (`'staging'` |
+  `'production'`) and a nullable `session_token`.
+- **`../db/002_rate_limits.sql`** — the shared sliding-window limiter table.
+- **`functions/submit-form/`** — validates the form, applies the rate limit,
+  and inserts the row. One function serves both forms (routed by the `form`
+  field in the body).
+
+## Spam protection
+
+Three layers, all in the function:
+
+1. **Honeypot** — a hidden `company` field. If a bot fills it, the function
+   returns `{ ok: true }` and stores nothing.
+2. **Validation** — required fields, email format, length clamps per form.
+3. **Rate limit** — a sliding window (default **5 per 10 min**) counted in the
+   `rate_limits` table, keyed by **both** the caller's salted IP hash and their
+   `session_token`. Either key over its limit returns `429`. The count lives in
+   the database so it holds across the function's stateless instances.
+
+The raw IP is never stored — only a salted SHA-256 hash, used transiently as a
+rate-limit key. Set **`IP_HASH_SALT`** so the small IPv4 space can't be brute-
+forced back from a hash.
+
+## Setup (once the project exists)
+
+1. **Run the schema.** Paste `db/001_contact_forms.sql` then `db/002_rate_limits.sql`
+   into the Supabase SQL editor (or `supabase db push`). Both are idempotent.
+2. **Deploy the function with JWT verification off:**
+   ```bash
+   supabase functions deploy submit-form --no-verify-jwt
+   ```
+   `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are provided automatically.
+3. **Set the salt secret:**
+   ```bash
+   supabase secrets set IP_HASH_SALT=<a long random string>
+   ```
+   Without it the IP hash still removes plaintext IPs but offers no pre-image
+   resistance.
+4. **Point the site at the project.** In `ui/layout.js` (`//online` block), set
+   `SUPABASE_URL` → `https://<project-ref>.supabase.co` and `SUPABASE_ANON` →
+   the project's **publishable** key. Both are public and ship in the online
+   bundle; until they are set the form falls back to the `mailto:`.
+5. **Origins.** `functions/submit-form/index.ts` allows the site's origins in
+   `ALLOWED_ORIGINS`; add the production custom domain there once it is live.
+
+Staging and production share one project — staging rows are tagged
+`environment='staging'`, so `where environment='production'` filters them out.

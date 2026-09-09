@@ -1,0 +1,10 @@
+# Supabase CLI config.
+project_id = "victim2victor"
+
+# submit-form is called from the browser with only the publishable key (no user
+# JWT), so JWT verification is off; the function does its own validation and
+# rate limiting. If deploying from the dashboard instead of the CLI, toggle
+# "Verify JWT" off there, or deploy with:
+#   supabase functions deploy submit-form --no-verify-jwt
+[functions.submit-form]
+verify_jwt = false
