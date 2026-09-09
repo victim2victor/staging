@@ -603,27 +603,52 @@ publishable key, it could bypass any limiter. So:
   which keeps whatever local fallback the form had).
 
 **Rate limiting** is counted in the database, not function memory (an edge function
-runs as several stateless instances). A small `rate_limits` table holds one row per
-hit under an opaque `bucket` string; the function counts rows in the trailing window
-and refuses when over:
+runs as several stateless instances). Use a **fixed-window atomic counter**: one
+`rate_limits` row per `(key, window)` bucket, incremented in a single statement so
+concurrent requests can't race past the limit. Expose it as a `rate_limit_hit(key,
+limit, window)` SQL function the edge functions call by RPC — it returns the verdict
+plus `retry_after` for a proper `429` header:
 
 ```sql
 CREATE TABLE IF NOT EXISTS rate_limits (
-  id BIGSERIAL PRIMARY KEY, bucket TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  key TEXT NOT NULL, window_start TIMESTAMPTZ NOT NULL, count INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (key, window_start)
 );
-CREATE INDEX IF NOT EXISTS rate_limits_bucket_created_idx ON rate_limits (bucket, created_at);
 ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;   -- service role only
+
+CREATE OR REPLACE FUNCTION rate_limit_hit(p_key TEXT, p_limit INT, p_window_seconds INT)
+RETURNS TABLE (allowed BOOLEAN, remaining INT, retry_after INT)
+LANGUAGE plpgsql AS $$
+DECLARE v_bucket TIMESTAMPTZ; v_count INT;
+BEGIN
+  v_bucket := to_timestamp(floor(extract(epoch FROM now()) / p_window_seconds) * p_window_seconds);
+  INSERT INTO rate_limits (key, window_start, count) VALUES (p_key, v_bucket, 1)
+    ON CONFLICT (key, window_start) DO UPDATE SET count = rate_limits.count + 1
+    RETURNING count INTO v_count;
+  allowed     := v_count <= p_limit;
+  remaining   := greatest(0, p_limit - v_count);
+  retry_after := CASE WHEN v_count <= p_limit THEN 0
+    ELSE ceil(extract(epoch FROM (v_bucket + make_interval(secs => p_window_seconds)) - now()))::INT END;
+  RETURN NEXT;
+END; $$;
+REVOKE ALL ON FUNCTION rate_limit_hit(TEXT, INT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION rate_limit_hit(TEXT, INT, INT) TO service_role;
 ```
 
-Key each request under **two buckets — the caller's IP and their session token** —
-so one browser is capped even behind a shared IP, and a rotated token can't reset the
-IP's allowance:
+The function **fails open** — if the limiter itself errors, allow the request rather
+than block real users over a transient DB problem. (A simpler row-per-hit sliding
+window — one row per request, counted over the trailing window — also works, but it
+has a count-then-insert race and grows a row per request; prefer the atomic function.)
+
+Key each request under the caller's **IP and their session token** — `<action>:<ip_hash>`
+and `<action>:<session_token>` — so one browser is capped even behind a shared IP, and a
+rotated token can't reset the IP's allowance:
 
 - **IP** — never store the raw IP. Hash it (`SHA-256` with an `IP_HASH_SALT` secret,
-  the same salt across all functions) and use `ip:<hash>` as the bucket.
+  the **same salt across all functions**) and use it in the key.
 - **Session token** — a random `crypto.randomUUID()` the client keeps in
-  `localStorage` and sends with every write; bucket `sess:<uuid>`. Store it on the
-  row too (nullable, no FK) as a soft link.
+  `localStorage` and sends with every write. Store it on the row too (nullable, no FK)
+  as a soft link.
 
 Add cheap **spam protection** in the same function: a hidden **honeypot** field (bots
 fill it → return success, store nothing) and per-field validation (required, email
@@ -663,6 +688,53 @@ document it alongside the other columns in the README.
 Then reads filter by build: `where environment = 'production'` excludes staging
 traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online path
 entirely, so no row is ever written from it.)
+
+### Anonymous page-visit tracking
+
+When an app wants to know its traffic, add tracking the same way — an edge function
+is the only write path, so it stays private and rate-limited. The online build fires
+a **fire-and-forget beacon on every page load**; the offline build strips it, so the
+demo sends nothing.
+
+Two tables, both **RLS-on with no policies** (analytics are private — the owner reads
+them in the dashboard):
+
+- **`sessions`** — the hub, one row per browser. Keyed by a random
+  `crypto.randomUUID()` token in `localStorage` (**reuse the same token the writes use**,
+  so a submission can be soft-linked to its browsing session). It also carries the
+  salted `ip_hash`, the `environment`, the user agent, and coarse geolocation.
+- **`page_views`** — one row per load, `session_token` referencing `sessions`
+  (`on delete cascade`), plus `page` and `referrer`.
+
+The **`track-visit`** function (service role), in order:
+
+1. **Drop bots up front** by User-Agent (a denylist of `bot|crawl|spider|headless|…`
+   plus named crawlers and link-preview unfurlers) — return `200 {ok:true,bot:true}`
+   so the beacon doesn't retry, and record nothing. This is **metrics-only**: the site
+   is static Pages, so crawlers still load every page and **SEO is unaffected**.
+2. **Rate-limit** by hashed IP via `rate_limit_hit` (above), e.g. 60/min. Fail open.
+3. **Geolocate once, on first sight only** — look up the raw IP (ipapi.co, free/no key,
+   with a ~2s timeout; best-effort, all fields nullable) *only* when inserting a new
+   session; a returning session just bumps `last_seen`. Never geolocate on every visit —
+   that burns the lookup quota for no new information.
+4. **Upsert the session, then insert the page view.** The raw IP is used only in
+   memory (geo + rate-limit key); only its salted hash is ever stored.
+
+Client beacon (inside `//online`, so `dev` strips it):
+
+```js
+fetch(SUPABASE_URL + "/functions/v1/track-visit", {
+    method: "POST", keepalive: true,
+    headers: { "Authorization": "Bearer " + SUPABASE_ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ session_token: sessionToken(), environment: DB_ENV,
+                           page: location.pathname, referrer: document.referrer || null })
+}).catch(function () {});   // never blocks or affects the page
+```
+
+Keep session identity to **the token alone** (one browser = one session, simplest FK)
+by default. Where sessions also anchor sensitive records (e.g. orders) or you want
+per-network granularity, key them on `(token, ip_hash)` instead — the same token from
+a new network then starts a new session.
 
 ## When scaffolding a new app
 
