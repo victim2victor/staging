@@ -28,18 +28,21 @@
             <div class="form-card">
                 <h3>Send us a message</h3>
                 <p class="form-note">Opens your email app with the details filled in.</p>
-                <form onsubmit="return handleForm(event, 'Victim2Victor enquiry')">
+                <form onsubmit="return handleForm(event, 'enquiries', 'Victim2Victor enquiry')">
+                    <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+                        <label>Company<input type="text" name="company" data-hp="1" tabindex="-1" autocomplete="off"></label>
+                    </div>
                     <div class="field">
                         <label for="c-email">Email</label>
-                        <input id="c-email" type="email" name="Email" placeholder="you@example.com" required>
+                        <input id="c-email" type="email" name="email" data-label="Email" placeholder="you@example.com" required>
                     </div>
                     <div class="field">
                         <label for="c-subject">Subject</label>
-                        <input id="c-subject" type="text" name="Subject" placeholder="What is this about?" required>
+                        <input id="c-subject" type="text" name="subject" data-label="Subject" placeholder="What is this about?" required>
                     </div>
                     <div class="field">
                         <label for="c-message">Message</label>
-                        <textarea id="c-message" name="Message" placeholder="Write your message here..." required></textarea>
+                        <textarea id="c-message" name="message" data-label="Message" placeholder="Write your message here..." required></textarea>
                     </div>
                     <button class="btn btn--primary" type="submit">Submit Message</button>
                 </form>
@@ -48,29 +51,32 @@
             <div class="form-card">
                 <h3>Register for a workshop</h3>
                 <p class="form-note">Tell us which workshop you'd like to join.</p>
-                <form onsubmit="return handleForm(event, 'Workshop registration')">
+                <form onsubmit="return handleForm(event, 'workshop_registrations', 'Workshop registration')">
+                    <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+                        <label>Company<input type="text" name="company" data-hp="1" tabindex="-1" autocomplete="off"></label>
+                    </div>
                     <div class="field">
                         <label for="r-workshop">Which workshop</label>
-                        <input id="r-workshop" type="text" name="Which workshop" placeholder="e.g. Overcoming Childhood Trauma" required>
+                        <input id="r-workshop" type="text" name="workshop" data-label="Which workshop" placeholder="e.g. Overcoming Childhood Trauma" required>
                     </div>
                     <div class="two-up">
                         <div class="field">
                             <label for="r-name">Your Name</label>
-                            <input id="r-name" type="text" name="Name" placeholder="Full name" required>
+                            <input id="r-name" type="text" name="name" data-label="Your Name" placeholder="Full name" required>
                         </div>
                         <div class="field">
                             <label for="r-people">Number of people</label>
-                            <input id="r-people" type="text" name="Number of people" placeholder="1" required>
+                            <input id="r-people" type="text" name="people" data-label="Number of people" placeholder="1" required>
                         </div>
                     </div>
                     <div class="two-up">
                         <div class="field">
                             <label for="r-email">Email</label>
-                            <input id="r-email" type="email" name="Email" placeholder="you@example.com" required>
+                            <input id="r-email" type="email" name="email" data-label="Email" placeholder="you@example.com" required>
                         </div>
                         <div class="field">
                             <label for="r-phone">Phone Number</label>
-                            <input id="r-phone" type="tel" name="Phone" placeholder="+27 ..." required>
+                            <input id="r-phone" type="tel" name="phone" data-label="Phone" placeholder="+27 ..." required>
                         </div>
                     </div>
                     <button class="btn btn--primary" type="submit">Submit</button>

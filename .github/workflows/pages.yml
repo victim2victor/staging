@@ -44,8 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the single-file site
-        run: make dev
+      - name: Build the online single-file site
+        run: make prd
 
       - uses: actions/configure-pages@v5
 
@@ -65,8 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build (no deploy)
-        run: make dev
+      - name: Build the online site (no deploy)
+        run: make prd
 
   # STAGING repo, any branch → deploy to the staging Pages site.
   deploy-staging:
@@ -78,8 +78,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the single-file site
-        run: make dev
+      - name: Build the online staging site
+        run: make stg
 
       - uses: actions/configure-pages@v5
 

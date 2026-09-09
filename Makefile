@@ -16,18 +16,41 @@ IMGS      := $(wildcard ui/img/*)
 # the compose macro (vendored from unframe-kit; no submodule needed)
 include make/tpl.mk
 
-.PHONY: all dev clean
+.PHONY: all dev stg prd clean
 
 all: dev
 
-## dev — build the static single-file site into ui/dist/
-dev: $(BUILD_DIR)/index.html
+# ------------------------------------------------------------
+#  dev / stg / prd differ only in the back-end (Supabase) calls.
+#  The JS source fences those with //online markers:
+#    //online-start … //online-end   a block of back-end code
+#    … code …  //online              a single back-end line
+#  dev strips both (offline: mailto fallback only); stg and prd
+#  keep them (online: forms insert into Supabase). See README.
+# ------------------------------------------------------------
 
-$(BUILD_DIR)/index.html: $(SRC) ui/layout.css ui/layout.js $(COMPS) $(MAP) $(IMGS)
+## dev — offline single-file build (back-end calls stripped)
+dev:
 	@mkdir -p $(BUILD_DIR)/img
-	$(call compose,$(SRC),$(MAP),$@)
+	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
 	@cp $(IMGS) $(BUILD_DIR)/img/
-	@echo "Built $@"
+	@sed -i -e '/\/\/online-start/,/\/\/online-end/d' -e '/\/\/online$$/d' $(BUILD_DIR)/index.html
+	@echo "dev: offline build (Supabase calls stripped) → $(BUILD_DIR)/index.html"
+
+## stg — online build for staging (Supabase calls kept; rows tagged 'staging')
+stg:
+	@mkdir -p $(BUILD_DIR)/img
+	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+	@cp $(IMGS) $(BUILD_DIR)/img/
+	@sed -i 's/\(var SUPABASE_ENV *= *"\)production"/\1staging"/' $(BUILD_DIR)/index.html
+	@echo "stg: online build (Supabase calls kept, environment=staging) → $(BUILD_DIR)/index.html"
+
+## prd — online build for production (Supabase calls kept; rows tagged 'production')
+prd:
+	@mkdir -p $(BUILD_DIR)/img
+	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+	@cp $(IMGS) $(BUILD_DIR)/img/
+	@echo "prd: online build (Supabase calls kept, environment=production) → $(BUILD_DIR)/index.html"
 
 ## clean — remove the generated output
 clean:
