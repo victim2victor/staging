@@ -27,18 +27,28 @@ CREATE TABLE IF NOT EXISTS sessions (
   timezone       TEXT,                  -- IANA
   asorg          TEXT,                  -- ISP / network (bot-filtering signal)
   user_agent     TEXT,
-  created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   first_seen     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),  -- first sight of this browser; set once, never bumped
   last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()    -- bumped on every return visit
 );
 
--- Idempotent add for databases created before `first_seen` existed: add the
--- column, then backfill it from `created_at` so historical rows carry a real
--- first-sight time rather than the moment of this migration.
+-- Idempotent migration for databases created before the first_seen/last_seen
+-- pair replaced created_at on sessions: add first_seen if it's missing, backfill
+-- it from the old created_at where that column still exists, then drop created_at
+-- (first_seen is now the session's first-sight timestamp; there is no row-audit
+-- created_at on sessions).
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW();
-UPDATE sessions SET first_seen = created_at WHERE first_seen <> created_at;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'sessions' AND column_name = 'created_at'
+  ) THEN
+    UPDATE sessions SET first_seen = created_at;
+    ALTER TABLE sessions DROP COLUMN created_at;
+  END IF;
+END $$;
 
-CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions (created_at);
+DROP INDEX IF EXISTS sessions_created_at_idx;
 CREATE INDEX IF NOT EXISTS sessions_first_seen_idx ON sessions (first_seen);
 CREATE INDEX IF NOT EXISTS sessions_env_idx        ON sessions (environment);
 

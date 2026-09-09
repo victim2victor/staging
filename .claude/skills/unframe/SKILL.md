@@ -708,14 +708,16 @@ dashboard queries — works everywhere.
   on every table whose rows are written per-build (or reachable via its session).
   Set it in the edge function, never trust it blind from the client. (See the
   `environment` column section above.)
-- **`created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`** — on **every** table; it's the
-  row-audit timestamp. Index it `DESC` for anything the owner reads newest-first
-  (`CREATE INDEX … ON t (created_at DESC)`).
-- **Activity timestamps** — where a row is *seen repeatedly* (like a session), add a
-  **`first_seen` / `last_seen`** pair: both `TIMESTAMPTZ NOT NULL DEFAULT NOW()`, set
-  together on insert, but **only `last_seen` is bumped** on return activity, so
-  `first_seen` stays pinned to the first sight. `created_at` still records the row
-  write; `first_seen`/`last_seen` describe the subject's lifespan.
+- **`created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`** — the row-audit timestamp, on
+  every **insert-once** table (`enquiries`, `page_views`, …). Index it `DESC` for
+  anything the owner reads newest-first (`CREATE INDEX … ON t (created_at DESC)`).
+- **Activity timestamps** — where a row is *seen repeatedly* (like a session), use a
+  **`first_seen` / `last_seen`** pair **instead of** `created_at`: both
+  `TIMESTAMPTZ NOT NULL DEFAULT NOW()`, set together on insert, but **only `last_seen`
+  is bumped** on return activity, so `first_seen` stays pinned to the first sight. The
+  pair supersedes a row-audit `created_at` on such tables — `sessions` carries
+  `first_seen`/`last_seen` and **no `created_at`** (its first-sight time *is*
+  `first_seen`).
 - **`session_token UUID`** — the browser identity, **always this exact name**. It is
   the PK on `sessions` and the reference column everywhere else (see the reference
   rule below). Never invent a second name for it.
@@ -742,7 +744,6 @@ site-specific meaning, so they should be **identical in every repo**:
     timezone       TEXT,                  -- IANA
     asorg          TEXT,                  -- ISP / network (bot-filtering signal)
     user_agent     TEXT,
-    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     first_seen     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),  -- first sight; set once, never bumped
     last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()    -- bumped on every return visit
   );
@@ -798,7 +799,8 @@ them in the dashboard):
   salted `ip_hash`, the `environment`, the user agent, and coarse geolocation.
   A **`first_seen`/`last_seen`** pair brackets the browser's activity: both default to
   `NOW()` on insert, but only `last_seen` is bumped on return visits, so `first_seen`
-  stays pinned to the first sight (both live alongside the row-audit `created_at`).
+  stays pinned to the first sight. There is **no `created_at`** on `sessions` — the
+  first-sight time *is* `first_seen`.
 - **`page_views`** — one row per load, `session_token` referencing `sessions`
   (`on delete cascade`), plus `page` and `referrer`.
 
