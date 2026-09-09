@@ -7,9 +7,11 @@
 -- cannot race past the limit.
 --
 -- The key embeds the salted IP hash (and, for submissions, the session token)
--- transiently — e.g. 'submit:<ip_hash>', 'submit:sess:<uuid>', 'visit:<ip_hash>'.
+-- transiently — e.g. 'submit:<ip_hash>', 'submit:sess:<token>', 'visit:<ip_hash>'.
 -- It is never a stored session column, so rotating a session token can't reset
--- the IP allowance. RLS is on with no policies: service role only.
+-- the IP allowance. This is infrastructure, not an interaction table: the key is
+-- the identity and one browser is capped across both builds, so there is no `env`
+-- column here. RLS is on with no policies: service role only.
 
 CREATE TABLE IF NOT EXISTS rate_limits (
   key           TEXT        NOT NULL,

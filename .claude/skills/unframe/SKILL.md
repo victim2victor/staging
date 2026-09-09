@@ -334,9 +334,9 @@ babysit and no second workflow to keep in step.
 staging repo builds `make stg` and the production repo `make prd` — **both online**,
 both talking to the real backend. Staging is where you exercise the live wiring before
 promoting, so it should hit the backend, not the offline demo. Both environments write
-to the **same** backend; to keep their data distinguishable, every table carries an
-`environment` column (see "The `environment` column" below): `make stg` stamps rows
-`'staging'`, `make prd` stamps `'production'`, so staging activity can be viewed on its
+to the **same** backend; to keep their data distinguishable, every interaction table
+carries an `env` column (see "The `env` column" below): `make stg` stamps rows `0`
+(staging), `make prd` stamps `1` (production), so staging activity can be viewed on its
 own or filtered out of production. (`make dev` stays the local offline preview and the
 single-repo Pages demo — there is no backend there to be online against.)
 
@@ -641,8 +641,9 @@ window — one row per request, counted over the trailing window — also works,
 has a count-then-insert race and grows a row per request; prefer the atomic function.)
 
 Key each request under the caller's **IP and their session token** — `<action>:<ip_hash>`
-and `<action>:<session_token>` — so one browser is capped even behind a shared IP, and a
-rotated token can't reset the IP's allowance:
+and `<action>:sess:<token>` — so one browser is capped even behind a shared IP, and a
+rotated token can't reset the IP's allowance (the token is the browser's `sessions.token`,
+available client-side before any session row exists — never the surrogate `session_id`):
 
 - **IP** — never store the raw IP. Hash it (`SHA-256` with an `IP_HASH_SALT` secret,
   the **same salt across all functions**) and use it in the key.
@@ -660,21 +661,22 @@ Lay the back-end out like the other repos: `db/NNN_*.sql` for schema, one
 `verify_jwt`, and a `supabase/README.md` with the setup steps (run SQL, deploy
 functions, set `IP_HASH_SALT`, fill the URL + publishable key).
 
-### The `environment` column — tag every row with its build
+### The `env` column — tag every row with its build
 
 Staging and production deploy online by default (above) and write to the **same**
-backend, so **every table carries an `environment` column** to keep the two apart.
-Make it `not null` with a `check (environment in ('staging', 'production'))`, and
-document it alongside the other columns in the README.
+backend, so **every interaction table carries an `env` column** to keep the two apart.
+Make it `env SMALLINT NOT NULL CHECK (env IN (0, 1))` — **`0` = staging, `1` = production**
+— and document it alongside the other columns in the README. (A compact integer flag,
+not a string: it's the same two-way tag on every table, so keep it small and uniform.)
 
 **The edge function sets it**, two ways in order of preference:
 
 1. **From the request origin**, where staging and production have distinct hostnames
-   (`https://app.example.com` → `'production'`). This is server-authoritative and the
-   client can't spoof it.
+   (`https://app.example.com` → `1`). This is server-authoritative and the client can't
+   spoof it.
 2. **From a build stamp**, where the two share an origin (e.g. GitHub Pages path-based
    staging). The online config in `layout.js` carries a variable (e.g. `DB_ENV`)
-   defaulting to `"production"`; the browser sends it and the function trusts it as a
+   defaulting to `1` (production); the browser sends it and the function trusts it as a
    fallback. The `prd` target keeps the default; the `stg` target rewrites it with a
    one-line `sed` on the composed output — the same mechanism `dev` uses to strip
    `//online` code:
@@ -682,12 +684,114 @@ document it alongside the other columns in the README.
    ```make
    stg:
    	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
-   	@sed -i 's/\(var DB_ENV *= *"\)production"/\1staging"/' $(BUILD_DIR)/index.html
+   	@sed -i 's/\(var DB_ENV *= *\)1/\10/' $(BUILD_DIR)/index.html
    ```
 
-Then reads filter by build: `where environment = 'production'` excludes staging
-traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online path
+Then reads filter by build: `where env = 1` excludes staging traffic; `= 0` shows only
+it. (The offline `dev` build strips the online path
 entirely, so no row is ever written from it.)
+
+### Schema conventions — keep table & column names identical across repos
+
+The backend schema is meant to be **portable**: the same tables and column names
+recur in every app built this way, so when you copy this skill (and the `db/*.sql`
+files) into a new repo, keep the shared shapes **byte-for-byte identical** and only
+add site-specific tables around them. That way one mental model — and one set of
+dashboard queries — works everywhere.
+
+**Column-naming rules (every table follows these):**
+
+- **`snake_case`** for all identifiers; **plural** table names (`enquiries`,
+  `sessions`, `page_views`); index names are **`<table>_<column>_idx`** (add
+  `_desc` intent via the index definition, not the name).
+- **Primary key** — **every** table uses a surrogate `id BIGSERIAL PRIMARY KEY`,
+  `sessions` included. Natural identifiers (like a browser token) are separate
+  columns with their own `UNIQUE` constraint, never the PK — so foreign keys are
+  always a compact `BIGINT`, uniform across the schema.
+- **`env SMALLINT NOT NULL CHECK (env IN (0, 1))`** — **`0` = staging, `1` = production**
+  — on **every interaction table** (each row is self-describing without a join). Set it
+  in the edge function, never trust it blind from the client. (See the `env` column
+  section above.) *Not* on pure infrastructure tables like `rate_limits`, whose key is
+  its identity and which is deliberately shared across builds.
+- **`created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`** — the row-audit timestamp, on
+  every **insert-once** table (`enquiries`, `page_views`, …). Index it `DESC` for
+  anything the owner reads newest-first (`CREATE INDEX … ON t (created_at DESC)`).
+- **Activity timestamps** — where a row is *seen repeatedly* (like a session), use a
+  **`first_seen` / `last_seen`** pair **instead of** `created_at`: both
+  `TIMESTAMPTZ NOT NULL DEFAULT NOW()`, set together on insert, but **only `last_seen`
+  is bumped** on return activity, so `first_seen` stays pinned to the first sight. The
+  pair supersedes a row-audit `created_at` on such tables — `sessions` carries
+  `first_seen`/`last_seen` and **no `created_at`** (its first-sight time *is*
+  `first_seen`).
+- **`session_id BIGINT`** — the reference to a session, **always this exact name**,
+  pointing at `sessions(id)` (see the reference rule below). The browser's own random
+  identifier is **`sessions.token UUID` (`UNIQUE NOT NULL`)** — the value the client
+  holds in `localStorage` and sends up; the function looks the session up by `token`
+  and stores/returns its `id`. Never expose the surrogate `id` to the client, and never
+  reference a session by `token`.
+- **`ip_hash TEXT`** — a **salted SHA-256** of the caller's IP. The raw IP is never
+  stored in any table; it's used transiently for geo + as a rate-limit key.
+
+**The shared tables are canonical — copy them unchanged.** These three carry no
+site-specific meaning, so they should be **identical in every repo**:
+
+- **`rate_limits`** + the `rate_limit_hit(...)` function — copy verbatim (see the
+  rate-limit section above). Same columns, same function signature, everywhere.
+- **`sessions`** — the hub, one row per browser (`token` is the client-facing identity,
+  `id` is what every other table references):
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS sessions (
+    id             BIGSERIAL    PRIMARY KEY,
+    token          UUID         NOT NULL UNIQUE,       -- browser's localStorage identifier
+    env            SMALLINT     NOT NULL CHECK (env IN (0, 1)),
+    ip_hash        TEXT         NOT NULL,
+    country        CHAR(2),               -- ISO 3166-1 alpha-2; NULL if unknown
+    continent      CHAR(2),
+    city           TEXT,
+    latitude       DOUBLE PRECISION,      -- city-level
+    longitude      DOUBLE PRECISION,      -- city-level
+    timezone       TEXT,                  -- IANA
+    asorg          TEXT,                  -- ISP / network (bot-filtering signal)
+    user_agent     TEXT,
+    first_seen     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),  -- first sight; set once, never bumped
+    last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()    -- bumped on every return visit
+  );
+  ```
+
+- **`page_views`** — one row per load, referencing a session:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS page_views (
+    id             BIGSERIAL    PRIMARY KEY,
+    env            SMALLINT     NOT NULL CHECK (env IN (0, 1)),
+    session_id     BIGINT       NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    page           TEXT         NOT NULL DEFAULT '/',
+    referrer       TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  );
+  ```
+
+**Site-specific tables — the rules.** Whatever a given app adds (orders, bookings,
+comments, …) follows the same conventions plus one hard rule:
+
+1. **Every interaction row references a session — always.** Carry
+   `session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE`, so any row is
+   attributable to the browser that created it (join back to `sessions` for geo,
+   first/last seen, user agent; dedupe or rate-limit by browser; the session's deletion
+   cascades). **This is possible for every table** — including ones that can arrive
+   *before* a page-view beacon, like a contact form — because the write already goes
+   through an edge function: the function **resolves the session first** (look it up by
+   `token`; create a minimal row if this is the browser's first write), gets its `id`,
+   then inserts the interaction row with that `session_id`. So there is no nullable
+   "soft link" any more — the reference is mandatory everywhere, and the function's
+   job is to make sure the session exists before it writes.
+2. **Carry `env` and `created_at`** (rules above).
+3. **RLS on, no policies** — private by default; the edge function (service role)
+   is the only write path. The sole exception is deliberately public content (e.g. a
+   read-only catalog), which gets a `SELECT` policy — see "Data is private by default".
+4. **All user-supplied fields are `TEXT`** unless there's a real reason otherwise
+   (forms are free-text); validate/clamp lengths in the edge function, not the schema.
 
 ### Anonymous page-visit tracking
 
@@ -699,12 +803,17 @@ demo sends nothing.
 Two tables, both **RLS-on with no policies** (analytics are private — the owner reads
 them in the dashboard):
 
-- **`sessions`** — the hub, one row per browser. Keyed by a random
-  `crypto.randomUUID()` token in `localStorage` (**reuse the same token the writes use**,
-  so a submission can be soft-linked to its browsing session). It also carries the
-  salted `ip_hash`, the `environment`, the user agent, and coarse geolocation.
-- **`page_views`** — one row per load, `session_token` referencing `sessions`
-  (`on delete cascade`), plus `page` and `referrer`.
+- **`sessions`** — the hub, one row per browser. Surrogate `id` PK; the browser's
+  random `crypto.randomUUID()` value lives in the `token` column (`UNIQUE`), held in
+  `localStorage` and **reused for every write**, so the function can find the session
+  and stamp its `id` onto each interaction row. It also carries the salted `ip_hash`,
+  the `env`, the user agent, and coarse geolocation. A **`first_seen`/`last_seen`** pair
+  brackets the browser's activity: both default to `NOW()` on insert, but only
+  `last_seen` is bumped on return visits, so `first_seen` stays pinned to the first
+  sight. There is **no `created_at`** on `sessions` — the first-sight time *is*
+  `first_seen`.
+- **`page_views`** — one row per load, `session_id` referencing `sessions(id)`
+  (`on delete cascade`), plus its own `env`, `page`, and `referrer`.
 
 The **`track-visit`** function (service role), in order:
 
@@ -717,24 +826,28 @@ The **`track-visit`** function (service role), in order:
    with a ~2s timeout; best-effort, all fields nullable) *only* when inserting a new
    session; a returning session just bumps `last_seen`. Never geolocate on every visit —
    that burns the lookup quota for no new information.
-4. **Upsert the session, then insert the page view.** The raw IP is used only in
-   memory (geo + rate-limit key); only its salted hash is ever stored.
+4. **Resolve the session, then insert the page view.** Look the session up by `token`:
+   insert it (returning its `id`) on first sight, else bump `last_seen`; then insert the
+   page view with that `session_id`. The raw IP is used only in memory (geo + rate-limit
+   key); only its salted hash is ever stored.
 
-Client beacon (inside `//online`, so `dev` strips it):
+Client beacon (inside `//online`, so `dev` strips it) — send the browser's `token` and
+the numeric `env`:
 
 ```js
 fetch(SUPABASE_URL + "/functions/v1/track-visit", {
     method: "POST", keepalive: true,
     headers: { "Authorization": "Bearer " + SUPABASE_ANON, "Content-Type": "application/json" },
-    body: JSON.stringify({ session_token: sessionToken(), environment: DB_ENV,
+    body: JSON.stringify({ token: sessionToken(), env: DB_ENV,
                            page: location.pathname, referrer: document.referrer || null })
 }).catch(function () {});   // never blocks or affects the page
 ```
 
-Keep session identity to **the token alone** (one browser = one session, simplest FK)
+Keep session identity to **the token alone** (one browser = one session, simplest key)
 by default. Where sessions also anchor sensitive records (e.g. orders) or you want
-per-network granularity, key them on `(token, ip_hash)` instead — the same token from
-a new network then starts a new session.
+per-network granularity, match on `(token, ip_hash)` instead — the same token from
+a new network then starts a new session. Either way the token is only ever the lookup
+key; other tables always reference the resolved `sessions.id` via `session_id`.
 
 ## When scaffolding a new app
 
