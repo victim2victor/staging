@@ -38,13 +38,14 @@ var CONTACT_EMAIL = "victim2victorinitiative@gmail.com";
 //online-start
 var SUPABASE_URL  = "https://bhwzunirlxmfknelnjtx.supabase.co";
 var SUPABASE_ANON = "sb_publishable_JYZYkEzooPHRLT0Jufi6hA_qe9373ZB";
-// Stamped per build: prd keeps "production"; stg rewrites it to "staging"
+// Stamped per build: prd keeps 1 (production); stg rewrites it to 0 (staging)
 // (see the Makefile). The edge function trusts this only where the request
 // origin doesn't already resolve the environment.
-var SUPABASE_ENV  = "production";
+var SUPABASE_ENV  = 1;
 
-// A random per-browser token, kept in localStorage — sent with each submission
-// as a soft link and as one of the rate-limit keys.
+// A random per-browser token, kept in localStorage — sent with each request so
+// the edge function can resolve (or create) this browser's session row; it is
+// also one of the rate-limit keys.
 function sessionToken() {
     try {
         var t = localStorage.getItem("v2v_session");
@@ -70,8 +71,8 @@ function sessionToken() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                session_token: sessionToken(),
-                environment: SUPABASE_ENV,
+                token: sessionToken(),
+                env: SUPABASE_ENV,
                 page: location.pathname,
                 referrer: document.referrer || null
             })
@@ -87,7 +88,7 @@ function handleForm(evt, table, subjectPrefix) {
     //online-start
     // Online build: POST to the submit-form edge function (service role writes;
     // it validates, honeypots and rate-limits). `table` names the form.
-    var payload = { form: table, environment: SUPABASE_ENV, session_token: sessionToken() };
+    var payload = { form: table, env: SUPABASE_ENV, token: sessionToken() };
     var inputs = form.querySelectorAll("input, textarea");
     for (var j = 0; j < inputs.length; j++) {
         if (inputs[j].name) payload[inputs[j].name] = inputs[j].value;

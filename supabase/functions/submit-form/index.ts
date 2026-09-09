@@ -21,9 +21,10 @@ const ALLOWED_ORIGINS = new Set([
   'https://victim2victor.co.za',
   'https://www.victim2victor.co.za',
 ]);
-const ENV_BY_ORIGIN: Record<string, 'staging' | 'production'> = {
-  'https://victim2victor.co.za':     'production',
-  'https://www.victim2victor.co.za': 'production',
+// Environment tag: 0 = staging, 1 = production.
+const ENV_BY_ORIGIN: Record<string, 0 | 1> = {
+  'https://victim2victor.co.za':     1,
+  'https://www.victim2victor.co.za': 1,
 };
 
 const UUID_RE  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,7 +105,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!spec) return json({ error: 'Unknown form.' }, 422, origin);
 
   // Validate + build the row from the form's allowed fields only.
-  const row: Record<string, string> = {};
+  const row: Record<string, string | number> = {};
   for (const [field, rule] of Object.entries(spec)) {
     const raw = body[field];
     const value = typeof raw === 'string' ? raw.trim() : '';
@@ -114,13 +115,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // Environment: trust the origin where it resolves one; else the build stamp.
-  row.environment = ENV_BY_ORIGIN[origin]
-    ?? (body.environment === 'staging' || body.environment === 'production' ? body.environment : 'production');
+  const env: 0 | 1 = ENV_BY_ORIGIN[origin]
+    ?? (body.env === 0 || body.env === 1 ? body.env : 1);
+  row.env = env;
 
-  // Session token (soft link + rate-limit key).
-  const sessionToken =
-    typeof body.session_token === 'string' && UUID_RE.test(body.session_token) ? body.session_token : null;
-  if (sessionToken) row.session_token = sessionToken;
+  // Session token — REQUIRED: every interaction row references a session (the
+  // function resolves it below), and it is also a rate-limit key.
+  const token =
+    typeof body.token === 'string' && UUID_RE.test(body.token) ? body.token : null;
+  if (!token) return json({ error: 'Bad Request' }, 400, origin);
 
   const sb = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -130,7 +133,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // Rate limit by IP hash AND session token — either over its window trips 429.
   const rawIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
   const ipHash = await hashValue(rawIp);
-  const keys = [`submit:${ipHash}`, ...(sessionToken ? [`submit:sess:${sessionToken}`] : [])];
+  const keys = [`submit:${ipHash}`, `submit:sess:${token}`];
 
   for (const key of keys) {
     const rl = await rateLimit(sb, key);
@@ -139,6 +142,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
         { 'Retry-After': String(rl.retryAfter) });
     }
   }
+
+  // Resolve (or create) this browser's session so the row can reference it —
+  // a page-load beacon has usually created it already; a form-first visitor
+  // gets a minimal session here (geo stays null; track-visit only geolocates
+  // on its own first sight).
+  let { data: sess } = await sb.from('sessions').select('id').eq('token', token).maybeSingle();
+  if (!sess) {
+    const created = await sb.from('sessions').insert({ token, env, ip_hash: ipHash }).select('id').single();
+    sess = created.data;
+  }
+  if (!sess) return json({ error: 'Could not save your message. Please try again.' }, 500, origin);
+  row.session_id = sess.id;
 
   const { error } = await sb.from(form).insert(row);
   if (error) return json({ error: 'Could not save your message. Please try again.' }, 500, origin);

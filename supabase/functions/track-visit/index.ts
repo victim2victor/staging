@@ -15,9 +15,10 @@ const ALLOWED_ORIGINS = new Set([
   'https://victim2victor.co.za',
   'https://www.victim2victor.co.za',
 ]);
-const ENV_BY_ORIGIN: Record<string, 'staging' | 'production'> = {
-  'https://victim2victor.co.za':     'production',
-  'https://www.victim2victor.co.za': 'production',
+// Environment tag: 0 = staging, 1 = production.
+const ENV_BY_ORIGIN: Record<string, 0 | 1> = {
+  'https://victim2victor.co.za':     1,
+  'https://www.victim2victor.co.za': 1,
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,13 +99,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin) });
   if (req.method !== 'POST')    return new Response('Method Not Allowed', { status: 405, headers: corsHeaders(origin) });
 
-  let body: { session_token?: unknown; page?: unknown; referrer?: unknown; environment?: unknown } = {};
+  let body: { token?: unknown; page?: unknown; referrer?: unknown; env?: unknown } = {};
   try { body = await req.json(); } catch { return new Response('Bad Request', { status: 400, headers: corsHeaders(origin) }); }
 
-  if (typeof body.session_token !== 'string' || !UUID_RE.test(body.session_token)) {
+  if (typeof body.token !== 'string' || !UUID_RE.test(body.token)) {
     return new Response('Bad Request', { status: 400, headers: corsHeaders(origin) });
   }
-  const sessionToken = body.session_token;
+  const token = body.token;
   const page      = typeof body.page     === 'string' ? body.page.slice(0, 500)      : '/';
   const referrer  = typeof body.referrer === 'string' ? body.referrer.slice(0, 1000) : null;
   const userAgent = req.headers.get('user-agent')?.slice(0, 500) ?? null;
@@ -112,8 +113,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // Bot UA → drop silently (200, nothing recorded, no signal it was filtered).
   if (userAgent && BOT_UA_RE.test(userAgent)) return ok(origin, { bot: true });
 
-  const environment = ENV_BY_ORIGIN[origin]
-    ?? (body.environment === 'staging' || body.environment === 'production' ? body.environment : 'production');
+  const env: 0 | 1 = ENV_BY_ORIGIN[origin]
+    ?? (body.env === 0 || body.env === 1 ? body.env : 1);
 
   const rawIp  = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
   const ipHash = await hashValue(rawIp);
@@ -130,26 +131,31 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // Session: geolocate once on first sight; otherwise just bump last_seen.
+  // Resolve the surrogate id either way — page_views references it.
   const { data: existing } = await sb
-    .from('sessions').select('session_token').eq('session_token', sessionToken).maybeSingle();
+    .from('sessions').select('id').eq('token', token).maybeSingle();
 
+  let sessionId: number;
   if (!existing) {
     const geo = await fetchGeo(rawIp);
     // asorg bot signal only when the UA is missing/short (real users on cloud VPNs have a UA).
     if (geo.asorg && (!userAgent || userAgent.length < 20) && BOT_ASORG_RE.test(geo.asorg)) {
       return ok(origin, { bot: true });
     }
-    await sb.from('sessions').insert({
-      session_token: sessionToken, environment, ip_hash: ipHash,
+    const { data: created, error } = await sb.from('sessions').insert({
+      token, env, ip_hash: ipHash,
       country: geo.country, continent: geo.continent, city: geo.city,
       latitude: geo.latitude, longitude: geo.longitude, timezone: geo.timezone,
       asorg: geo.asorg, user_agent: userAgent,
-    });
+    }).select('id').single();
+    if (error || !created) return ok(origin);   // never block the page over a metrics write
+    sessionId = created.id;
   } else {
-    await sb.from('sessions').update({ last_seen: new Date().toISOString() }).eq('session_token', sessionToken);
+    sessionId = existing.id;
+    await sb.from('sessions').update({ last_seen: new Date().toISOString() }).eq('id', sessionId);
   }
 
-  await sb.from('page_views').insert({ session_token: sessionToken, page, referrer });
+  await sb.from('page_views').insert({ session_id: sessionId, env, page, referrer });
 
   return ok(origin);
 });
