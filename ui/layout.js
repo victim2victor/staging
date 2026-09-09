@@ -36,8 +36,8 @@ var CONTACT_EMAIL = "victim2victorinitiative@gmail.com";
    live inside //online markers: stripped from the dev build, present in
    stg/prd. Fill both in once the Victim2Victor Supabase project exists. */
 //online-start
-var SUPABASE_URL  = "https://YOUR_PROJECT_REF.supabase.co";
-var SUPABASE_ANON = "YOUR_PUBLISHABLE_KEY";
+var SUPABASE_URL  = "https://bhwzunirlxmfknelnjtx.supabase.co";
+var SUPABASE_ANON = "sb_publishable_JYZYkEzooPHRLT0Jufi6hA_qe9373ZB";
 // Stamped per build: prd keeps "production"; stg rewrites it to "staging"
 // (see the Makefile). The edge function trusts this only where the request
 // origin doesn't already resolve the environment.
