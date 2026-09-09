@@ -689,6 +689,99 @@ Then reads filter by build: `where environment = 'production'` excludes staging
 traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online path
 entirely, so no row is ever written from it.)
 
+### Schema conventions — keep table & column names identical across repos
+
+The backend schema is meant to be **portable**: the same tables and column names
+recur in every app built this way, so when you copy this skill (and the `db/*.sql`
+files) into a new repo, keep the shared shapes **byte-for-byte identical** and only
+add site-specific tables around them. That way one mental model — and one set of
+dashboard queries — works everywhere.
+
+**Column-naming rules (every table follows these):**
+
+- **`snake_case`** for all identifiers; **plural** table names (`enquiries`,
+  `sessions`, `page_views`); index names are **`<table>_<column>_idx`** (add
+  `_desc` intent via the index definition, not the name).
+- **Primary key** — ordinary tables use `id BIGSERIAL PRIMARY KEY`. The one
+  exception is `sessions`, keyed by its natural id `session_token UUID PRIMARY KEY`.
+- **`environment TEXT NOT NULL CHECK (environment IN ('staging','production'))`** —
+  on every table whose rows are written per-build (or reachable via its session).
+  Set it in the edge function, never trust it blind from the client. (See the
+  `environment` column section above.)
+- **`created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`** — on **every** table; it's the
+  row-audit timestamp. Index it `DESC` for anything the owner reads newest-first
+  (`CREATE INDEX … ON t (created_at DESC)`).
+- **Activity timestamps** — where a row is *seen repeatedly* (like a session), add a
+  **`first_seen` / `last_seen`** pair: both `TIMESTAMPTZ NOT NULL DEFAULT NOW()`, set
+  together on insert, but **only `last_seen` is bumped** on return activity, so
+  `first_seen` stays pinned to the first sight. `created_at` still records the row
+  write; `first_seen`/`last_seen` describe the subject's lifespan.
+- **`session_token UUID`** — the browser identity, **always this exact name**. It is
+  the PK on `sessions` and the reference column everywhere else (see the reference
+  rule below). Never invent a second name for it.
+- **`ip_hash TEXT`** — a **salted SHA-256** of the caller's IP. The raw IP is never
+  stored in any table; it's used transiently for geo + as a rate-limit key.
+
+**The shared tables are canonical — copy them unchanged.** These three carry no
+site-specific meaning, so they should be **identical in every repo**:
+
+- **`rate_limits`** + the `rate_limit_hit(...)` function — copy verbatim (see the
+  rate-limit section above). Same columns, same function signature, everywhere.
+- **`sessions`** — the analytics hub, one row per browser:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS sessions (
+    session_token  UUID         PRIMARY KEY,
+    environment    TEXT         NOT NULL CHECK (environment IN ('staging','production')),
+    ip_hash        TEXT         NOT NULL,
+    country        CHAR(2),               -- ISO 3166-1 alpha-2; NULL if unknown
+    continent      CHAR(2),
+    city           TEXT,
+    latitude       DOUBLE PRECISION,      -- city-level
+    longitude      DOUBLE PRECISION,      -- city-level
+    timezone       TEXT,                  -- IANA
+    asorg          TEXT,                  -- ISP / network (bot-filtering signal)
+    user_agent     TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    first_seen     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),  -- first sight; set once, never bumped
+    last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()    -- bumped on every return visit
+  );
+  ```
+
+- **`page_views`** — one row per load, referencing a session:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS page_views (
+    id             BIGSERIAL    PRIMARY KEY,
+    session_token  UUID         NOT NULL REFERENCES sessions(session_token) ON DELETE CASCADE,
+    page           TEXT         NOT NULL DEFAULT '/',
+    referrer       TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  );
+  ```
+
+**Site-specific tables — the rules.** Whatever a given app adds (orders, bookings,
+comments, …) follows the same conventions plus one hard rule:
+
+1. **Every row references the session.** Carry a `session_token UUID` column so any
+   row is attributable to the browser that created it — this is what lets you join a
+   record back to its `sessions` row (geo, first/last seen, user agent) and dedupe
+   or rate-limit by browser. Two forms of the reference, by whether the session must
+   already exist:
+   - **Hard FK** — `session_token UUID NOT NULL REFERENCES sessions(session_token)
+     ON DELETE CASCADE` when the row only exists *because of* a tracked session
+     (orders, `page_views`, anything created mid-visit). Deleting the session cascades.
+   - **Soft link** — a plain nullable `session_token UUID` with **no FK** when the row
+     can arrive *before or without* a session (contact-form submissions: a form may
+     post before any beacon has created the session row, and it's also a rate-limit
+     key). Documented as "soft link; may be NULL".
+2. **Carry `environment` and `created_at`** (rules above).
+3. **RLS on, no policies** — private by default; the edge function (service role)
+   is the only write path. The sole exception is deliberately public content (e.g. a
+   read-only catalog), which gets a `SELECT` policy — see "Data is private by default".
+4. **All user-supplied fields are `TEXT`** unless there's a real reason otherwise
+   (forms are free-text); validate/clamp lengths in the edge function, not the schema.
+
 ### Anonymous page-visit tracking
 
 When an app wants to know its traffic, add tracking the same way — an edge function
