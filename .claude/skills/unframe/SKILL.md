@@ -535,11 +535,12 @@ move is incremental and touches only the code inside the `//online` markers — 
 build keeps working throughout. Two backends, same `fetch` contract:
 
 - **Supabase** (managed) — the `fetch(...)` calls inside `//online-start … //online-end`
-  blocks talk to Supabase. **Public reads** (e.g. a read-only catalogue) may hit the REST
-  API (PostgREST) directly with the publishable key. **Writes go through a rate-limited
-  edge function by default** (see "Writes go through a rate-limited edge function" below) —
-  not straight to PostgREST. Persistence and later auth live in Supabase. Lower-effort;
-  reach for it first when a managed Postgres is enough.
+  blocks talk to Supabase. **Data is private by default**: tables are RLS-on with no
+  policies, so the publishable key can neither read nor write them. **Writes always go
+  through a rate-limited edge function; reads do too — unless the table is deliberately
+  public content** (e.g. a read-only catalogue), which may then be read straight from
+  PostgREST. See the two subsections below. Persistence and later auth live in Supabase.
+  Lower-effort; reach for it first when a managed Postgres is enough.
 - **Go + Postgres** (self-hosted) — the same `fetch(...)` calls hit a **Go HTTP service**
   that owns a **Postgres** database. This is the **top of the ladder**: full control over
   the API and schema. Climb here last, **unless a Go service is specifically required**,
@@ -553,6 +554,34 @@ build a first-class target after it lands. When you move to Postgres (Supabase o
 documented CRUD models are what the schema is built from — another reason the README
 models must stay exact.
 
+### Data is private by default — open reads only for public content
+
+**Treat everything in the database as sensitive unless proven otherwise.** The
+default for every table is **RLS enabled with no policies**, which closes *both*
+reads and writes to the publishable key — the browser can neither `SELECT` from it
+nor write to it. Only the edge functions (service role) touch the data, and the
+owner reads it in the dashboard. Form submissions, sign-ups, orders, metrics,
+anything with a person's details: all stay closed. There is no "read-only is
+harmless" — a public `SELECT` exposes every row to anyone with the URL.
+
+**A public read policy is a deliberate, per-table exception, justified only when the
+table holds content the site is *meant* to publish** — e.g. a product catalogue the
+pages render for everyone (as in the wtl site). Such a table gets a permissive
+`SELECT` policy and `SELECT` granted to `anon`, and is read straight from PostgREST
+with the publishable key; it must carry **no private columns**, since the whole row
+becomes world-readable. Everything else keeps the closed default and is reached only
+through an edge function. When you add a `SELECT` policy, say in the README why that
+table's contents are public.
+
+```sql
+-- Default (private): closed to the publishable key; edge function (service role) only.
+ALTER TABLE contact_requests ENABLE ROW LEVEL SECURITY;   -- no policies → no public read/write
+
+-- Exception (public content): explicit, read-only, non-sensitive rows.
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public read" ON products FOR SELECT TO anon, authenticated USING (true);
+```
+
 ### Writes go through a rate-limited edge function (default)
 
 **Inserts do not go straight to PostgREST — they go through an edge function that
@@ -562,8 +591,8 @@ enforceable server-side: if the browser could `POST` straight to PostgREST with 
 publishable key, it could bypass any limiter. So:
 
 - **The table is RLS-on with *no* policies.** The publishable key can neither read
-  nor write it. (Public *read* tables are the exception — they get a permissive
-  `SELECT` policy and are read directly.)
+  nor write it (see "Data is private by default" above; a public read is the rare,
+  deliberate exception).
 - **An edge function is the only write path**, connecting as **service role**
   (`SUPABASE_SERVICE_ROLE_KEY`, injected automatically). It validates input, applies
   the rate limit, then inserts. Deploy it with JWT verification off
