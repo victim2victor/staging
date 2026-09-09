@@ -5,7 +5,7 @@ description: >-
   Proxy-based reactivity core, HTML/CSS/JS components composed into a single static
   index.html by an awk-based Makefile, and an online/offline build toggle. Use this
   when the user wants to scaffold or extend a lightweight single-file web UI, add a
-  reactive component, define relational localStorage data models with a dev/stg demo
+  reactive component, define relational localStorage data models with an offline demo
   seed, or set up the make-based single-file build. Reflects anroleroux's personal
   app-building conventions. Also covers deployment: the single-repo GitHub Pages demo,
   and the two-repo staging→production setup where a staging repo deploys every branch
@@ -199,9 +199,11 @@ function seedDemo() {
 ```
 
 - **It only seeds missing keys** — it never overwrites data the user has entered.
-- **It runs in `dev` and `stg` builds only.** Exclude it from the `prd` build (leave its
-  token out of the prd `web.map`, or strip it the way online blocks are stripped) so
-  **production starts empty and waits for the user to enter real data.**
+- **It runs in the offline `dev` build only.** The online `stg`/`prd` builds read from
+  the real backend (staging is online by default — see the deployment section), so they
+  don't seed localStorage. Exclude the seed from them (leave its token out of their
+  `web.map`, or strip it the way online blocks are stripped) so the backend-backed
+  builds start from real data, not demo rows.
 - Its rows are the natural place to show the relational shape working end to end, so keep
   them consistent with the documented models.
 
@@ -296,8 +298,9 @@ jobs:
 
 The demo is the **in-browser, seeded offline build** — the `dev` target (see the naming
 preference below), which strips the `//online` blocks and includes the demo seed so
-visitors land on a populated app. Use `make stg` instead if you keep a distinct staging
-demo; don't publish `prd`, which starts empty by design.
+visitors land on a populated app. This single-repo demo is always the offline `dev`
+build; `stg`/`prd` are the online, backend-backed builds of the two-repo production
+setup (below), not this one.
 
 Adjust two things to the app:
 
@@ -326,6 +329,16 @@ Work happens in the staging repo. Production is reached by **promotion**: a job 
 staging repo pushes a ref to the production repo's `main`, and the production repo's own
 copy of the workflow picks it up and deploys. Production has no build of its own to
 babysit and no second workflow to keep in step.
+
+**Staging deploys the online build by default.** Once the app has a backend, the
+staging repo builds `make stg` and the production repo `make prd` — **both online**,
+both talking to the real backend. Staging is where you exercise the live wiring before
+promoting, so it should hit the backend, not the offline demo. Both environments write
+to the **same** backend; to keep their data distinguishable, every table carries an
+`environment` column (see "The `environment` column" below): `make stg` stamps rows
+`'staging'`, `make prd` stamps `'production'`, so staging activity can be viewed on its
+own or filtered out of production. (`make dev` stays the local offline preview and the
+single-repo Pages demo — there is no backend there to be online against.)
 
 **One workflow file, committed identically to both repos**, branching on
 `github.repository` so the same file behaves correctly in each. Keeping the two copies
@@ -398,7 +411,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make dev
+      - run: make prd            # online: rows tagged environment=production
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -411,7 +424,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make dev            # validate only; never deploys
+      - run: make prd            # online build; validate only, never deploys
 
   deploy-staging:
     if: github.repository == '<org>/<staging-repo>'
@@ -421,7 +434,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make dev
+      - run: make stg            # online: rows tagged environment=staging
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -481,9 +494,11 @@ jobs:
   (`echo "example.com" > ui/dist/CNAME`), one hostname per repo. Without it the Pages
   deploy drops the domain.
 - **One-time, per repo:** Settings → Pages → Source: **GitHub Actions**.
-- The build target is the app's own (`make dev` if that is all it has). Production
-  should use `make prd` **only once that target actually exists** — see the naming
-  section below; don't add one just to have a production-sounding name.
+- The build targets are the app's own. Once the app has an online build, **staging
+  deploys `make stg` and production `make prd` — both online** (see "Staging deploys
+  the online build by default" above). Before a backend exists there is only the
+  offline `make dev`, and both jobs run that until `stg`/`prd` targets actually exist —
+  see the naming section below; don't add one just to have a production-sounding name.
 
 ## The app evolves — how many targets is per-project, but name them dev/stg/prd
 
@@ -535,6 +550,29 @@ app actually needs shared/persistent data, not at scaffold time, and keep the of
 build a first-class target after it lands. When you move to Postgres (Supabase or Go), the
 documented CRUD models are what the schema is built from — another reason the README
 models must stay exact.
+
+### The `environment` column — tag every row with its build
+
+Staging and production deploy online by default (above) and write to the **same**
+backend, so **every table carries an `environment` column** to keep the two apart.
+Make it `not null` with a `check (environment in ('staging', 'production'))`, and
+document it alongside the other columns in the README.
+
+The value is **stamped at build time, not detected at runtime.** The online config in
+`layout.js` carries a variable (e.g. `DB_ENV`) defaulting to `"production"`, and every
+insert sends it as the row's `environment`. The `prd` target keeps the default; the
+`stg` target rewrites it to `"staging"` with a one-line `sed` on the composed output —
+the same mechanism the `dev` target uses to strip `//online` code:
+
+```make
+stg:
+	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+	@sed -i 's/var DB_ENV = "production"/var DB_ENV = "staging"/' $(BUILD_DIR)/index.html
+```
+
+Then reads filter by build: `where environment = 'production'` excludes staging
+traffic; `= 'staging'` shows only it. (The offline `dev` build strips the online config
+with everything else, so no row is ever written from it.)
 
 ## When scaffolding a new app
 
