@@ -703,6 +703,9 @@ them in the dashboard):
   `crypto.randomUUID()` token in `localStorage` (**reuse the same token the writes use**,
   so a submission can be soft-linked to its browsing session). It also carries the
   salted `ip_hash`, the `environment`, the user agent, and coarse geolocation.
+  A **`first_seen`/`last_seen`** pair brackets the browser's activity: both default to
+  `NOW()` on insert, but only `last_seen` is bumped on return visits, so `first_seen`
+  stays pinned to the first sight (both live alongside the row-audit `created_at`).
 - **`page_views`** — one row per load, `session_token` referencing `sessions`
   (`on delete cascade`), plus `page` and `referrer`.
 

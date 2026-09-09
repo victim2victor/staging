@@ -10,6 +10,9 @@
 --   sessions    — one row per browser, keyed by its localStorage token
 --                 (the same `v2v_session` used to soft-link contact submissions).
 --                 Geolocated once, on first sight; best-effort, all nullable.
+--                 `first_seen`/`last_seen` bracket the browser's activity: both
+--                 default to NOW() on insert, but only `last_seen` is bumped on
+--                 return visits, so `first_seen` stays pinned to the first sight.
 --   page_views  — one row per page load, referencing a session.
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -25,10 +28,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   asorg          TEXT,                  -- ISP / network (bot-filtering signal)
   user_agent     TEXT,
   created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  first_seen     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),  -- first sight of this browser; set once, never bumped
+  last_seen      TIMESTAMPTZ  NOT NULL DEFAULT NOW()    -- bumped on every return visit
 );
 
+-- Idempotent add for databases created before `first_seen` existed: add the
+-- column, then backfill it from `created_at` so historical rows carry a real
+-- first-sight time rather than the moment of this migration.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW();
+UPDATE sessions SET first_seen = created_at WHERE first_seen <> created_at;
+
 CREATE INDEX IF NOT EXISTS sessions_created_at_idx ON sessions (created_at);
+CREATE INDEX IF NOT EXISTS sessions_first_seen_idx ON sessions (first_seen);
 CREATE INDEX IF NOT EXISTS sessions_env_idx        ON sessions (environment);
 
 CREATE TABLE IF NOT EXISTS page_views (
