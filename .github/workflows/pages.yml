@@ -78,8 +78,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the single-file site
-        run: make dev
+      - name: Build the online staging site
+        run: make stg
 
       - uses: actions/configure-pages@v5
 

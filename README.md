@@ -82,6 +82,7 @@ schema lives in `supabase/migrations/0001_contact_forms.sql`.
 |---|---|---|
 | `id` | `bigint` | identity, primary key |
 | `created_at` | `timestamptz` | defaults to `now()` |
+| `environment` | `text` | `'staging'` or `'production'` — which build wrote the row |
 | `email` | `text` | sender's email |
 | `subject` | `text` | subject line |
 | `message` | `text` | message body |
@@ -92,11 +93,19 @@ schema lives in `supabase/migrations/0001_contact_forms.sql`.
 |---|---|---|
 | `id` | `bigint` | identity, primary key |
 | `created_at` | `timestamptz` | defaults to `now()` |
+| `environment` | `text` | `'staging'` or `'production'` — which build wrote the row |
 | `workshop` | `text` | which workshop |
 | `name` | `text` | registrant's name |
 | `people` | `text` | number of people |
 | `email` | `text` | registrant's email |
 | `phone` | `text` | phone number |
+
+**Environment tagging.** Both the staging and production sites write to the same
+Supabase project, so every row records which one it came from. `environment` is
+stamped at build time — `make prd` writes `'production'`, `make stg` rewrites it to
+`'staging'` (a `check` constraint on the column allows only those two values). Filter
+on `environment = 'production'` to exclude staging traffic, or `= 'staging'` to see
+only it.
 
 **Security.** Both tables have row-level security enabled with an INSERT-only
 policy for the `anon` role — the public forms can submit rows but cannot read,
@@ -130,18 +139,20 @@ branches on `github.repository`:
 
 | Repo | Ref | Result |
 |---|---|---|
-| `victim2victor/staging` | any branch | `make dev` (offline) → staging Pages site |
-| `victim2victor/staging` | `main` | `make dev` → staging Pages, then promote to production |
-| `victim2victor/victim2victor.github.io` | `main` | `make prd` (online) → production Pages site |
+| `victim2victor/staging` | any branch | `make stg` (online, env=staging) → staging Pages site |
+| `victim2victor/staging` | `main` | `make stg` → staging Pages, then promote to production |
+| `victim2victor/victim2victor.github.io` | `main` | `make prd` (online, env=production) → production Pages site |
 | `victim2victor/victim2victor.github.io` | other | `make prd` build-check only, no deploy |
 
-Staging deploys the **offline** build (`make dev`) — no secrets, forms use the
-mailto fallback — so pushing a branch to see it on staging works with no Supabase
-setup. Production deploys the **online** build (`make prd`), which needs the
-Supabase credentials filled in (see **Contact forms** above) to submit form data.
-One Pages site per repo, so the most recent push is what's live on staging.
-Merging to `main` ships to production — promotion is gated on the staging build
-succeeding.
+Both sites deploy an **online** build and write to the same Supabase project —
+staging tags its rows `environment='staging'`, production tags `'production'` (see
+**Data models** above), so staging traffic can be filtered out. Both therefore need
+the Supabase credentials filled in (see **Contact forms**). The URL and publishable
+key are public and committed, so there are no repo secrets to set for the build
+itself. `make dev` remains the local **offline** preview (mailto fallback, no
+back-end). One Pages site per repo, so the most recent push is what's live on
+staging. Merging to `main` ships to production — promotion is gated on the staging
+build succeeding.
 
 The production repo must be named `victim2victor.github.io` — that exact name is
 what makes GitHub serve it at `https://victim2victor.github.io` rather than

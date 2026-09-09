@@ -37,6 +37,9 @@ var CONTACT_EMAIL = "victim2victorinitiative@gmail.com";
 //online-start
 var SUPABASE_URL      = "https://YOUR_PROJECT_REF.supabase.co";
 var SUPABASE_ANON_KEY = "YOUR_PUBLISHABLE_KEY";
+// Stamped per build: prd keeps "production"; stg rewrites it to "staging"
+// (see the Makefile), so staging rows can be filtered from production.
+var SUPABASE_ENV      = "production";
 //online-end
 
 function handleForm(evt, table, subjectPrefix) {
@@ -46,7 +49,7 @@ function handleForm(evt, table, subjectPrefix) {
     //online-start
     // Online build: persist the submission to Supabase, then thank the user.
     // Each input's `name` is its column; the whole form maps to one row.
-    var row = {};
+    var row = { environment: SUPABASE_ENV };
     var inputs = form.querySelectorAll("input, textarea");
     for (var j = 0; j < inputs.length; j++) {
         if (inputs[j].name) row[inputs[j].name] = inputs[j].value;

@@ -10,9 +10,14 @@
 -- or delete them. Read submissions in the Supabase dashboard or via the
 -- service role.
 
+-- `environment` records which build wrote the row ('staging' or 'production'),
+-- stamped at build time (see the Makefile), so staging activity can be viewed
+-- or filtered out separately from production.
+
 create table if not exists public.enquiries (
     id          bigint generated always as identity primary key,
     created_at  timestamptz not null default now(),
+    environment text not null check (environment in ('staging', 'production')),
     email       text not null,
     subject     text not null,
     message     text not null
@@ -21,6 +26,7 @@ create table if not exists public.enquiries (
 create table if not exists public.workshop_registrations (
     id          bigint generated always as identity primary key,
     created_at  timestamptz not null default now(),
+    environment text not null check (environment in ('staging', 'production')),
     workshop    text not null,
     name        text not null,
     people      text not null,
