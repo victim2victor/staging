@@ -8,7 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // geolocate and to rate-limit. Bot user-agents are dropped and never recorded.
 
 const RL_MAX    = 60;         // max beacons per window, per IP
-const RL_WINDOW = 60_000;     // 1 minute, in ms
+const RL_WINDOW = 60;         // 1 minute, in seconds
 
 const ALLOWED_ORIGINS = new Set([
   'https://victim2victor.github.io',
@@ -47,6 +47,19 @@ async function hashValue(value: string): Promise<string> {
   const salt = Deno.env.get('IP_HASH_SALT') ?? '';
   const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${value}`));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Atomic fixed-window rate limit via the rate_limit_hit SQL function. Returns
+// null on limiter error so callers fail open (metrics are never worth blocking
+// a real page load over a transient DB problem).
+// deno-lint-ignore no-explicit-any
+async function rateLimit(sb: any, key: string): Promise<{ allowed: boolean; retryAfter: number } | null> {
+  const { data, error } = await sb.rpc('rate_limit_hit', {
+    p_key: key, p_limit: RL_MAX, p_window_seconds: RL_WINDOW,
+  });
+  if (error) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? { allowed: row.allowed, retryAfter: row.retry_after } : null;
 }
 
 interface Geo {
@@ -107,18 +120,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  // Rate limit by hashed IP (shared bucket table; same limiter as submit-form).
-  const bucket = `ip:${ipHash}`;
-  const windowStart = new Date(Date.now() - RL_WINDOW).toISOString();
-  const { count } = await sb
-    .from('rate_limits')
-    .select('*', { count: 'exact', head: true })
-    .eq('bucket', bucket)
-    .gte('created_at', windowStart);
-  if ((count ?? 0) >= RL_MAX) return new Response('Too Many Requests', { status: 429, headers: corsHeaders(origin) });
-  await sb.from('rate_limits').insert({ bucket });
-  if (Math.random() < 0.01) {
-    await sb.from('rate_limits').delete().lt('created_at', new Date(Date.now() - 120_000).toISOString());
+  // Rate limit by hashed IP (shared rate_limit_hit function; same as submit-form).
+  const rl = await rateLimit(sb, `visit:${ipHash}`);
+  if (rl && !rl.allowed) {
+    return new Response('Too Many Requests', {
+      status: 429,
+      headers: { ...corsHeaders(origin), 'Retry-After': String(rl.retryAfter) },
+    });
   }
 
   // Session: geolocate once on first sight; otherwise just bump last_seen.

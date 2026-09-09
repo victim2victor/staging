@@ -166,9 +166,9 @@ Both forms (general enquiry and workshop registration) are wired through
   reaches the team.
 
 **Spam protection / rate limiting** lives entirely in the function: a hidden
-honeypot field, per-field validation, and a sliding-window limit (default **5 per
-10 min**) counted in `rate_limits`, keyed by **both** the caller's salted IP hash
-and their `session_token`. See `supabase/README.md`.
+honeypot field, per-field validation, and a fixed-window atomic rate limit
+(default **5 per 10 min**) via the `rate_limit_hit` SQL function, keyed by **both**
+the caller's salted IP hash and their `session_token`. See `supabase/README.md`.
 
 **Before the online build works:** run the `db/*.sql` files, deploy the functions
 (`supabase functions deploy submit-form --no-verify-jwt` and likewise

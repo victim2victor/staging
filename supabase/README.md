@@ -21,7 +21,8 @@ in the dashboard or via the service role).
 - **`../db/001_contact_forms.sql`** — `enquiries` and `workshop_registrations`
   (RLS on, no policies). Each row carries `environment` (`'staging'` |
   `'production'`) and a nullable `session_token`.
-- **`../db/002_rate_limits.sql`** — the shared sliding-window limiter table.
+- **`../db/002_rate_limits.sql`** — the shared limiter: a fixed-window counter
+  table plus the atomic `rate_limit_hit` SQL function.
 - **`functions/submit-form/`** — validates the form, applies the rate limit,
   and inserts the row. One function serves both forms (routed by the `form`
   field in the body).
@@ -33,10 +34,12 @@ Three layers, all in the function:
 1. **Honeypot** — a hidden `company` field. If a bot fills it, the function
    returns `{ ok: true }` and stores nothing.
 2. **Validation** — required fields, email format, length clamps per form.
-3. **Rate limit** — a sliding window (default **5 per 10 min**) counted in the
-   `rate_limits` table, keyed by **both** the caller's salted IP hash and their
-   `session_token`. Either key over its limit returns `429`. The count lives in
-   the database so it holds across the function's stateless instances.
+3. **Rate limit** — a fixed-window atomic counter (default **5 per 10 min**) via
+   the `rate_limit_hit` SQL function, keyed by **both** the caller's salted IP
+   hash and their `session_token`. Either key over its limit returns `429` (with
+   `Retry-After`). The count lives in the database and is incremented in one
+   statement, so it holds across the function's stateless instances and
+   concurrent requests can't race past the limit.
 
 The raw IP is never stored — only a salted SHA-256 hash, used transiently as a
 rate-limit key. Set **`IP_HASH_SALT`** so the small IPv4 space can't be brute-

@@ -8,11 +8,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // browser has no way to POST straight to PostgREST and skip the limiter.
 //
 // Spam protection is three layers: a hidden honeypot field (bots fill it),
-// per-field validation, and a sliding-window rate limit keyed by BOTH the
+// per-field validation, and a fixed-window rate limit keyed by BOTH the
 // caller's IP (salted hash) and their session token.
 
 const RL_MAX     = 5;          // max submissions per window, per key
-const RL_WINDOW  = 600_000;    // 10 minutes, in ms
+const RL_WINDOW  = 600;        // 10 minutes, in seconds
 
 // Browser origins allowed to call this function. Staging and production share
 // one project; origin also resolves the environment where the hostnames differ.
@@ -57,10 +57,10 @@ function corsHeaders(origin: string): Record<string, string> {
   };
 }
 
-function json(body: unknown, status: number, origin: string): Response {
+function json(body: unknown, status: number, origin: string, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(origin), ...extra, 'Content-Type': 'application/json' },
   });
 }
 
@@ -70,15 +70,17 @@ async function hashValue(value: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Atomic fixed-window rate limit via the rate_limit_hit SQL function. Returns
+// null on limiter error so callers fail open (a limiter outage never blocks a
+// genuine request).
 // deno-lint-ignore no-explicit-any
-async function overLimit(sb: any, bucket: string): Promise<boolean> {
-  const windowStart = new Date(Date.now() - RL_WINDOW).toISOString();
-  const { count } = await sb
-    .from('rate_limits')
-    .select('*', { count: 'exact', head: true })
-    .eq('bucket', bucket)
-    .gte('created_at', windowStart);
-  return (count ?? 0) >= RL_MAX;
+async function rateLimit(sb: any, key: string): Promise<{ allowed: boolean; retryAfter: number } | null> {
+  const { data, error } = await sb.rpc('rate_limit_hit', {
+    p_key: key, p_limit: RL_MAX, p_window_seconds: RL_WINDOW,
+  });
+  if (error) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? { allowed: row.allowed, retryAfter: row.retry_after } : null;
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -126,16 +128,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
   );
 
   // Rate limit by IP hash AND session token — either over its window trips 429.
-  const rawIp    = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
-  const ipBucket = `ip:${await hashValue(rawIp)}`;
-  const buckets  = [ipBucket, ...(sessionToken ? [`sess:${sessionToken}`] : [])];
+  const rawIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const ipHash = await hashValue(rawIp);
+  const keys = [`submit:${ipHash}`, ...(sessionToken ? [`submit:sess:${sessionToken}`] : [])];
 
-  for (const bucket of buckets) {
-    if (await overLimit(sb, bucket)) {
-      return json({ error: 'Too many submissions — please try again later.' }, 429, origin);
+  for (const key of keys) {
+    const rl = await rateLimit(sb, key);
+    if (rl && !rl.allowed) {
+      return json({ error: 'Too many submissions — please try again later.' }, 429, origin,
+        { 'Retry-After': String(rl.retryAfter) });
     }
   }
-  await sb.from('rate_limits').insert(buckets.map(bucket => ({ bucket })));
 
   const { error } = await sb.from(form).insert(row);
   if (error) return json({ error: 'Could not save your message. Please try again.' }, 500, origin);
