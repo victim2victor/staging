@@ -6,5 +6,9 @@ project_id = "victim2victor"
 # rate limiting. If deploying from the dashboard instead of the CLI, toggle
 # "Verify JWT" off there, or deploy with:
 #   supabase functions deploy submit-form --no-verify-jwt
+#   supabase functions deploy track-visit --no-verify-jwt
 [functions.submit-form]
+verify_jwt = false
+
+[functions.track-visit]
 verify_jwt = false

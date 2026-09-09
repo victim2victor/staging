@@ -1,8 +1,13 @@
 # Supabase back-end
 
-The two contact forms submit into Supabase. The offline `dev` build never
-touches it (the forms fall back to a `mailto:`); the online `stg`/`prd` builds
-POST to the `submit-form` edge function.
+The contact forms and anonymous page-visit tracking live in Supabase. The
+offline `dev` build never touches it (the forms fall back to a `mailto:`, and no
+tracking fires); the online `stg`/`prd` builds POST to the edge functions.
+
+Everything is private by default: every table is **RLS-on with no policies**, so
+the publishable key can neither read nor write it. The edge functions
+(`submit-form`, `track-visit`) are the only write path, connecting as service
+role; the owner reads the data in the Supabase dashboard.
 
 ## Write path — edge function only
 
@@ -37,16 +42,37 @@ The raw IP is never stored — only a salted SHA-256 hash, used transiently as a
 rate-limit key. Set **`IP_HASH_SALT`** so the small IPv4 space can't be brute-
 forced back from a hash.
 
+## Page-visit tracking
+
+A fire-and-forget beacon on every page load records anonymous visits, written
+only by the **`track-visit`** edge function (service role). Both tables are
+RLS-on with no policies — the browser can neither read nor write them.
+
+- **`../db/003_visits.sql`** — `sessions` (one row per browser, keyed by the
+  same `v2v_session` localStorage token the forms use; geolocated once on first
+  sight, all fields best-effort) and `page_views` (one row per load, referencing
+  a session). Both carry the environment via the session's `environment` column.
+- **`functions/track-visit/`** — drops bot user-agents up front (never
+  recorded), rate-limits by hashed IP (default **60 / min**), geolocates the IP
+  on the session's first sight (ipapi.co, best-effort), then upserts the session
+  and appends the page view. The raw IP is only ever hashed, never stored.
+
+Bot filtering is metrics-only — the site is static Pages, so crawlers still load
+every page and **SEO is unaffected**.
+
 ## Setup (once the project exists)
 
-1. **Run the schema.** Paste `db/001_contact_forms.sql` then `db/002_rate_limits.sql`
-   into the Supabase SQL editor (or `supabase db push`). Both are idempotent.
-2. **Deploy the function with JWT verification off:**
+1. **Run the schema.** Paste `db/001_contact_forms.sql`, `db/002_rate_limits.sql`,
+   then `db/003_visits.sql` into the Supabase SQL editor (or `supabase db push`).
+   All are idempotent.
+2. **Deploy both functions with JWT verification off:**
    ```bash
    supabase functions deploy submit-form --no-verify-jwt
+   supabase functions deploy track-visit --no-verify-jwt
    ```
    `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are provided automatically.
-3. **Set the salt secret:**
+3. **Set the salt secret** (the **same** salt both functions use, so IP hashes
+   match):
    ```bash
    supabase secrets set IP_HASH_SALT=<a long random string>
    ```
@@ -55,9 +81,11 @@ forced back from a hash.
 4. **Point the site at the project.** In `ui/layout.js` (`//online` block), set
    `SUPABASE_URL` → `https://<project-ref>.supabase.co` and `SUPABASE_ANON` →
    the project's **publishable** key. Both are public and ship in the online
-   bundle; until they are set the form falls back to the `mailto:`.
-5. **Origins.** `functions/submit-form/index.ts` allows the site's origins in
-   `ALLOWED_ORIGINS`; add the production custom domain there once it is live.
+   bundle; until they are set the form falls back to the `mailto:` and tracking
+   no-ops.
+5. **Origins.** Both functions allow the site's origins in `ALLOWED_ORIGINS`;
+   add the production custom domain there once it is live.
 
-Staging and production share one project — staging rows are tagged
-`environment='staging'`, so `where environment='production'` filters them out.
+Staging and production share one project — rows are tagged
+`environment='staging'` vs `'production'` (on the row for submissions, on the
+session for visits), so `where environment='production'` filters staging out.

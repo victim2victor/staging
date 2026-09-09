@@ -106,6 +106,37 @@ back-end setup.
 A shared **`rate_limits`** table (`db/002_rate_limits.sql`) backs the limiter — see
 below.
 
+### Page-visit tracking
+
+Anonymous visits are tracked in two tables (`db/003_visits.sql`), written only by
+the `track-visit` edge function. The raw IP is never stored — only a salted hash.
+
+**`sessions`** — one row per browser, keyed by the same `session_token` the forms
+use. Geolocated once on first sight; every geo field is best-effort and nullable.
+
+| Column | Type | Notes |
+|---|---|---|
+| `session_token` | `uuid` | primary key — the browser's `v2v_session` token |
+| `environment` | `text` | `'staging'` or `'production'` |
+| `ip_hash` | `text` | salted SHA-256 of the IP (never the raw IP) |
+| `country` / `continent` | `char(2)` | ISO codes; nullable |
+| `city` | `text` | nullable |
+| `latitude` / `longitude` | `double precision` | city-level; nullable |
+| `timezone` | `text` | IANA; nullable |
+| `asorg` | `text` | ISP / network; nullable |
+| `user_agent` | `text` | nullable |
+| `created_at` / `last_seen` | `timestamptz` | default `now()` |
+
+**`page_views`** — one row per page load.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigint` | identity, primary key |
+| `session_token` | `uuid` | references `sessions`, `on delete cascade` |
+| `page` | `text` | path, defaults to `'/'` |
+| `referrer` | `text` | nullable |
+| `created_at` | `timestamptz` | defaults to `now()` |
+
 **Environment tagging.** Both the staging and production sites write to the same
 Supabase project, so every row records which one it came from. The edge function
 sets `environment`: from the request origin where the hostnames differ (the live
@@ -113,12 +144,12 @@ custom domain → `'production'`), otherwise from the build stamp (`make stg` �
 `'staging'`, `make prd` → `'production'`). A `check` constraint allows only those
 two values. Filter on `environment = 'production'` to exclude staging traffic.
 
-**Security.** Both tables (and `rate_limits`) have **row-level security enabled
-with no policies**, so the publishable key can neither read nor write them. Every
-submission is inserted by the `submit-form` edge function as **service role** —
-which is what makes the rate limiting unbypassable and keeps submissions
-unreadable from the client. Read them in the Supabase dashboard or via the service
-role.
+**Security.** Every table — `enquiries`, `workshop_registrations`, `rate_limits`,
+`sessions`, `page_views` — has **row-level security enabled with no policies**, so
+the publishable key can neither read nor write it. All writes go through the edge
+functions (`submit-form`, `track-visit`) as **service role**, which is what makes
+the rate limiting unbypassable and keeps the data unreadable from the client. Read
+it in the Supabase dashboard or via the service role.
 
 ## Contact forms — Supabase backend
 
@@ -139,11 +170,21 @@ honeypot field, per-field validation, and a sliding-window limit (default **5 pe
 10 min**) counted in `rate_limits`, keyed by **both** the caller's salted IP hash
 and their `session_token`. See `supabase/README.md`.
 
-**Before the online build works:** run `db/001_contact_forms.sql` and
-`db/002_rate_limits.sql`, deploy the function (`supabase functions deploy
-submit-form --no-verify-jwt`), set the `IP_HASH_SALT` secret, and fill in
-`SUPABASE_URL` / `SUPABASE_ANON` (the publishable key) in `ui/layout.js`. Full
-steps are in `supabase/README.md`.
+**Before the online build works:** run the `db/*.sql` files, deploy the functions
+(`supabase functions deploy submit-form --no-verify-jwt` and likewise
+`track-visit`), set the `IP_HASH_SALT` secret, and fill in `SUPABASE_URL` /
+`SUPABASE_ANON` (the publishable key) in `ui/layout.js`. Full steps are in
+`supabase/README.md`.
+
+## Page-visit tracking — Supabase backend
+
+The online build fires a fire-and-forget beacon on every page load to the
+**`track-visit` edge function**, which bot-filters, geolocates (once per browser),
+rate-limits by hashed IP, and records the visit into `sessions` / `page_views`
+(see **Data models**). It never blocks or affects the page. The offline `dev`
+build strips the beacon entirely, so the static demo sends nothing. Setup is the
+same one-time flow above (the `db/003_visits.sql` schema and the `track-visit`
+deploy are included there).
 
 ## Deployment (GitHub Pages)
 

@@ -56,6 +56,28 @@ function sessionToken() {
         return t;
     } catch (e) { return null; }   // storage blocked → submit without a token
 }
+
+// Anonymous page-visit beacon: fire-and-forget to the track-visit edge
+// function on load. Never blocks or affects the page; the offline build strips
+// it entirely. The edge function bot-filters, geolocates and rate-limits.
+(function trackVisit() {
+    try {
+        fetch(SUPABASE_URL + "/functions/v1/track-visit", {
+            method: "POST",
+            keepalive: true,
+            headers: {
+                "Authorization": "Bearer " + SUPABASE_ANON,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                session_token: sessionToken(),
+                environment: SUPABASE_ENV,
+                page: location.pathname,
+                referrer: document.referrer || null
+            })
+        }).catch(function () {});
+    } catch (e) { /* tracking never affects the page */ }
+})();
 //online-end
 
 function handleForm(evt, table, subjectPrefix) {
