@@ -43,6 +43,7 @@ stg:
 	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
 	@cp $(IMGS) $(BUILD_DIR)/img/
 	@sed -i 's/\(var SUPABASE_ENV *= *\)1/\10/' $(BUILD_DIR)/index.html
+	@echo "staging.victim2victor.co.za" > $(BUILD_DIR)/CNAME
 	@echo "stg: online build (Supabase calls kept, env=0 staging) → $(BUILD_DIR)/index.html"
 
 ## prd — online build for production (Supabase calls kept; rows tagged env=1)
@@ -50,6 +51,7 @@ prd:
 	@mkdir -p $(BUILD_DIR)/img
 	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
 	@cp $(IMGS) $(BUILD_DIR)/img/
+	@echo "victim2victor.co.za" > $(BUILD_DIR)/CNAME
 	@echo "prd: online build (Supabase calls kept, env=1 production) → $(BUILD_DIR)/index.html"
 
 ## clean — remove the generated output

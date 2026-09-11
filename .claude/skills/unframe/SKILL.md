@@ -490,15 +490,70 @@ jobs:
   someone committed directly to production. That is a signal to go and look, not
   something to overwrite.
 - **`fetch-depth: 0`** on the promoting checkout. The default shallow clone cannot push.
-- **Custom domains** need a `CNAME` written into the artifact before upload
-  (`echo "example.com" > ui/dist/CNAME`), one hostname per repo. Without it the Pages
-  deploy drops the domain.
 - **One-time, per repo:** Settings → Pages → Source: **GitHub Actions**.
 - The build targets are the app's own. Once the app has an online build, **staging
   deploys `make stg` and production `make prd` — both online** (see "Staging deploys
   the online build by default" above). Before a backend exists there is only the
   offline `make dev`, and both jobs run that until `stg`/`prd` targets actually exist —
   see the naming section below; don't add one just to have a production-sounding name.
+
+### Custom domains — one hostname per repo, staging on a subdomain of prod
+
+A repo's Pages site can carry a custom domain instead of its `*.github.io` URL.
+Because `ui/dist` is regenerated (and git-ignored) on every build, **the `CNAME`
+file has to be written by the build itself**, not committed by hand — otherwise
+the next deploy ships an artifact without it and Pages silently drops the domain.
+Bake it into the Makefile the same way as the `env`/`DB_ENV` stamp: each
+environment target writes its own hostname straight into the build output.
+
+- **Naming convention: staging lives on a subdomain of the production domain** —
+  `staging.<domain>` — so the two are obviously related and the production apex
+  stays reserved for the live site:
+
+  ```make
+  stg:
+  	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+  	@echo "staging.example.com" > $(BUILD_DIR)/CNAME
+
+  prd:
+  	$(call compose,$(SRC),$(MAP),$(BUILD_DIR)/index.html)
+  	@echo "example.com" > $(BUILD_DIR)/CNAME
+  ```
+
+  `dev` gets no `CNAME` — it's the local/offline build, never deployed to Pages.
+
+- **GitHub side, once per repo:** Settings → Pages → Custom domain — enter the
+  repo's hostname (root domain on the prod repo, `staging.<domain>` on the
+  staging repo) and tick **Enforce HTTPS** once the DNS check clears.
+
+- **DNS side, at the registrar — this is the part outside the repo:**
+  - Apex/root domain (prod) → an `A` record per GitHub Pages IP:
+    `185.199.108.153`, `.109.153`, `.110.153`, `.111.153`.
+  - `www` (if used) and the `staging` subdomain → a `CNAME` to the **owning
+    repo's** `<org>.github.io.` (the prod repo's for `www`/apex, since GitHub
+    Pages custom domains are one-hostname-per-repo).
+  - **Leave `MX` (and any other non-web) records untouched** — mail routing is
+    independent of where the site is hosted, and switching web records must not
+    touch it.
+  - Drop the record's TTL a day ahead of the cutover if it's currently long, so
+    the change propagates quickly; raise it back after.
+  - Verify with `dig <domain> A` / `dig staging.<domain> CNAME` before calling
+    the cutover done, and confirm mail still works separately from the web check.
+
+- **If the app has edge functions with an origin allowlist or origin-based `env`
+  resolution** (see "The `env` column" above), **the domain switch is not
+  complete without updating them.** `ALLOWED_ORIGINS` / `ENV_BY_ORIGIN` maps in
+  each function must gain the new hostnames — `https://staging.<domain>` → `0`,
+  `https://<domain>` (and `www`) → `1` — or CORS starts failing closed (the
+  browser sends the new `Origin`, the function still only recognizes the old
+  `*.github.io` one and answers with a mismatched
+  `Access-Control-Allow-Origin`) and origin-based env tagging silently falls
+  back to the client-sent flag instead of the server-trusted origin. Keep the
+  old `*.github.io` origin in the allowlist during the transition (some traffic
+  may still hit it until DNS/caches fully settle), and remove it once the
+  custom domain is confirmed live everywhere. **Editing the function source
+  isn't enough — redeploy it** (`supabase functions deploy <name>
+  --no-verify-jwt`) for the new allowlist to take effect.
 
 ## The app evolves — how many targets is per-project, but name them dev/stg/prd
 

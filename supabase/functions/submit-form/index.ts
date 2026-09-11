@@ -17,14 +17,16 @@ const RL_WINDOW  = 600;        // 10 minutes, in seconds
 // Browser origins allowed to call this function. Staging and production share
 // one project; origin also resolves the environment where the hostnames differ.
 const ALLOWED_ORIGINS = new Set([
-  'https://victim2victor.github.io',   // staging + prod Pages (path-scoped)
+  'https://victim2victor.github.io',   // legacy Pages default; drop once DNS is fully cut over
+  'https://staging.victim2victor.co.za',
   'https://victim2victor.co.za',
   'https://www.victim2victor.co.za',
 ]);
 // Environment tag: 0 = staging, 1 = production.
 const ENV_BY_ORIGIN: Record<string, 0 | 1> = {
-  'https://victim2victor.co.za':     1,
-  'https://www.victim2victor.co.za': 1,
+  'https://staging.victim2victor.co.za': 0,
+  'https://victim2victor.co.za':         1,
+  'https://www.victim2victor.co.za':     1,
 };
 
 const UUID_RE  = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
